@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Lets a build be rehearsed without publishing anything.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # The release is created once, up front, so the two build jobs have something
+  # to upload to. Letting each of them create-or-find it races when they start at
+  # the same moment, which is exactly what a matrix does.
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+      tag: ${{ steps.tag.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: tag
+        run: echo "name=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      # `tauri build` names its artifacts from the version in tauri.conf.json, so
+      # a tag that disagrees with it produces a v0.2.0 release full of 0.1.0
+      # files. Cheaper to stop here than to work that out from the artifact names.
+      - name: Check the tag matches the app version
+        run: |
+          config=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          tag="${{ steps.tag.outputs.name }}"
+          if [ "v$config" != "$tag" ]; then
+            echo "tag $tag does not match tauri.conf.json version $config" >&2
+            exit 1
+          fi
+
+      # Reuses the release if one already exists for the tag, so a re-run after a
+      # build failure picks up where it left off instead of dying on
+      # "already_exists".
+      - id: create
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const tag = '${{ steps.tag.outputs.name }}'
+            const { owner, repo } = context.repo
+
+            try {
+              const { data } = await github.rest.repos.getReleaseByTag({ owner, repo, tag })
+              core.info(`reusing release ${data.id} for ${tag}`)
+              return data.id
+            } catch (error) {
+              if (error.status !== 404) throw error
+            }
+
+            const { data } = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              name: tag,
+              draft: true,
+              generate_release_notes: true,
+            })
+            return data.id
+
+  build:
+    needs: draft
+    strategy:
+      # One platform failing should not throw away the other's finished build.
+      fail-fast: false
+      matrix:
+        include:
+          # A single universal .dmg rather than one per architecture: it spares
+          # everyone downloading it the question of which Mac they have.
+          - platform: macos-14
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - platform: windows-latest
+            rust_targets: ""
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.draft.outputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.platform }}
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing and notarisation. All of these are absent until the Apple
+          # secrets are added to the repository, and Tauri simply skips signing
+          # when APPLE_SIGNING_IDENTITY is empty — so this workflow produces a
+          # working (if unsigned) .dmg before any of that is set up.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          releaseId: ${{ needs.draft.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+  # Only flips the release visible once both platforms have uploaded, so nobody
+  # finds a release carrying just one of the two installers.
+  publish:
+    needs: [draft, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.draft.outputs.release_id }},
+              draft: false,
+            })

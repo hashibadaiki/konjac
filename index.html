@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Konjac</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="titlebar" data-tauri-drag-region>
+      <span class="titlebar__name" data-tauri-drag-region>コンニャク</span>
+      <span class="titlebar__badge" id="backend-badge">…</span>
+      <div class="titlebar__spacer" data-tauri-drag-region></div>
+      <button class="icon-btn" id="btn-settings" title="設定" aria-label="設定">⚙</button>
+      <button class="icon-btn" id="btn-minimize" title="最小化" aria-label="最小化">−</button>
+      <button class="icon-btn" id="btn-close" title="閉じる (Esc)" aria-label="閉じる">✕</button>
+    </header>
+
+    <main class="pane" id="pane-translate">
+      <p class="note note--warn hidden" id="api-key-warning">
+        <code>ANTHROPIC_API_KEY</code> が設定されています。この状態の Claude Code は
+        サブスクではなく <strong>API キー側に課金</strong>します。サブスクで使うなら、
+        この変数が無い環境からアプリを起動してください。
+      </p>
+
+      <div class="langbar">
+        <select id="source-lang" aria-label="翻訳元の言語"></select>
+        <button class="icon-btn icon-btn--swap" id="btn-swap" title="言語を入れ替え">⇄</button>
+        <select id="target-lang" aria-label="翻訳先の言語"></select>
+      </div>
+
+      <div class="langbar">
+        <select id="tone" aria-label="文体"></select>
+        <select id="model" aria-label="モデル" title="翻訳に使うモデル"></select>
+      </div>
+
+      <textarea
+        id="input"
+        class="box box--input"
+        placeholder="翻訳したいテキスト（⌘/Ctrl+Enter で翻訳）"
+        spellcheck="false"
+      ></textarea>
+
+      <p class="overflow hidden" id="input-overflow" role="status" aria-live="polite">
+        <span class="overflow__count" id="input-overflow-count"></span>
+        <span id="input-overflow-note"></span>
+      </p>
+
+      <div class="actions">
+        <button class="btn btn--primary" id="btn-translate">翻訳</button>
+        <span class="status" id="status"></span>
+      </div>
+
+      <div class="output-wrap">
+        <textarea
+          id="output"
+          class="box box--output"
+          placeholder="翻訳結果がここに表示されます（結果はそのまま編集できます）"
+          spellcheck="false"
+        ></textarea>
+
+        <div class="loading hidden" id="loading" role="status" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <span class="loading__label" id="loading-label">翻訳しています…</span>
+          <span class="loading__elapsed" id="loading-elapsed">0.0s</span>
+        </div>
+      </div>
+
+      <div class="actions actions--end">
+        <button class="btn" id="btn-copy">結果をコピー</button>
+      </div>
+    </main>
+
+    <!--
+      Stands in for the translate pane whenever the CLI cannot translate: not
+      installed, not on a path we can find, or too old for the flags this app
+      passes. The wording is filled in from the live probe, because "missing"
+      and "too old" need different instructions.
+    -->
+    <section class="pane pane--setup hidden" id="pane-setup">
+      <h2 class="setup__head" id="setup-head">Claude Code が必要です</h2>
+      <p class="note" id="setup-lead"></p>
+
+      <ol class="setup__steps" id="setup-steps">
+        <li>
+          <p id="setup-step-install">Claude Code をインストールする</p>
+          <div class="setup__cmd">
+            <code id="setup-command">npm install -g @anthropic-ai/claude-code</code>
+            <button class="btn btn--tiny" id="btn-setup-copy" title="コマンドをコピー">コピー</button>
+          </div>
+        </li>
+        <li>
+          ターミナルで <code>claude</code> を実行し、サブスクのアカウントでログインする。
+          一度通せば、このアプリはその認証をそのまま使う（API キーは要らない）
+        </li>
+        <li>下の「再検出」を押す</li>
+      </ol>
+
+      <div class="actions">
+        <button class="btn btn--primary" id="btn-setup-recheck">再検出</button>
+        <button class="btn" id="btn-setup-docs">手順を開く</button>
+        <button class="btn" id="btn-setup-settings">パスを指定</button>
+      </div>
+
+      <p class="status status--block" id="setup-status"></p>
+
+      <p class="note note--tip hidden" id="setup-detail"></p>
+    </section>
+
+    <section class="pane pane--settings hidden" id="pane-settings">
+      <p class="note">
+        翻訳は手元の <code>claude</code> CLI をワンショットで呼び出す。Claude の
+        サブスクにログイン済みなら API キーは要らない。
+      </p>
+
+      <label class="field">
+        <span>claude 実行ファイル</span>
+        <input id="set-claude-bin" type="text" placeholder="claude（または絶対パス）" spellcheck="false" />
+      </label>
+
+      <h2 class="subhead">起動方法</h2>
+
+      <label class="field field--row">
+        <input id="set-double-copy" type="checkbox" />
+        <span>コピー（⌘C / Ctrl+C）を 2 回押したら開いて、その内容を即翻訳</span>
+      </label>
+
+      <p class="note note--tip hidden" id="double-copy-gesture">—</p>
+
+      <div class="note note--tip hidden" id="permission-prompt">
+        <p>
+          <strong>⌘ を押したまま C を 2 回</strong>にも反応させるには、キーボードを直接
+          監視する必要がある。macOS の「アクセシビリティ」許可が要る（キーを見るだけで、
+          入力の書き換えはしない）。DeepL が初回起動時にこれを求めるのも同じ理由。
+        </p>
+        <p>
+          <strong>音声入力ソフトで勝手に反応してしまう場合もこれで直る。</strong>
+          Aqua Voice などはクリップボード経由で文字を貼り付けるため、いまのクリップボード
+          監視では 2 回コピーしたのと見分けがつかない。キーボード監視は ⌘C のキーだけを
+          見るので、貼り付け（⌘V）では反応しない。
+        </p>
+        <div class="actions">
+          <button class="btn" id="btn-open-accessibility">許可設定を開く</button>
+          <button class="btn" id="btn-recheck-accessibility">許可したので再確認</button>
+        </div>
+      </div>
+
+      <label class="field" id="field-double-copy-window">
+        <span>2 回目までの猶予（ミリ秒。既定 600）</span>
+        <input id="set-double-copy-window" type="number" min="150" max="2000" step="50" />
+      </label>
+
+      <p class="note note--warn hidden" id="double-copy-unsupported">
+        この OS ではコピー 2 回を検出できない（macOS と Windows のみ対応）。
+        ウィンドウを出したまま使うか、トレイアイコンから開き直すこと。
+      </p>
+
+      <div class="diag hidden" id="double-copy-diag">
+        <div class="diag__row">
+          <span class="diag__label">検出方式</span>
+          <span class="diag__value" id="diag-running">—</span>
+        </div>
+        <div class="diag__row" id="diag-row-count">
+          <span class="diag__label">クリップボード変更カウンタ</span>
+          <span class="diag__value" id="diag-count">—</span>
+        </div>
+        <div class="diag__row">
+          <span class="diag__label">コピーを検出した回数</span>
+          <span class="diag__value" id="diag-copies">—</span>
+        </div>
+        <div class="diag__row" id="diag-row-bursts">
+          <span class="diag__label">他アプリの書き込みとして無視した回数</span>
+          <span class="diag__value" id="diag-bursts">—</span>
+        </div>
+        <div class="diag__row">
+          <span class="diag__label">2 回目として起動した回数</span>
+          <span class="diag__value" id="diag-doubles">—</span>
+        </div>
+        <p class="diag__hint" id="diag-hint">
+          この画面を開いたままコピーすると、値がその場で動く。
+        </p>
+      </div>
+
+      <p class="note note--tip">
+        ✕ や Esc で閉じても常駐している。トレイ（macOS はメニューバー）のアイコンから
+        開き直せる。終了もそこから。<strong>−</strong> は最小化で、こちらはタスクバー
+        （macOS は Dock）に残るのでそこから戻せる。
+      </p>
+
+      <h2 class="subhead">その他</h2>
+
+      <label class="field field--row">
+        <input id="set-auto-copy" type="checkbox" />
+        <span>翻訳結果を自動でクリップボードにコピー</span>
+      </label>
+
+      <label class="field">
+        <span>応答が途切れてから中止するまで（秒。既定 30）</span>
+        <input id="set-timeout" type="number" min="5" max="600" step="5" />
+      </label>
+
+      <p class="note note--tip">
+        翻訳は届いた分から順に表示されるので、長文でも待ち時間は最初の 1 文字までで済む。
+        この設定は「全体で何秒まで」ではなく「何も届かない状態が何秒続いたら諦めるか」。
+      </p>
+
+      <div class="actions">
+        <button class="btn btn--primary" id="btn-save">保存</button>
+        <button class="btn" id="btn-check">接続確認</button>
+        <span class="status" id="settings-status"></span>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

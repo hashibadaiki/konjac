@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch makes the previous run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Runs on macOS rather than Linux: it is the platform the app actually ships
+  # for, it compiles the macOS-only keyboard monitor (`key_watch.rs`) that Linux
+  # would skip entirely, and it needs none of the GTK/WebKit system packages a
+  # Linux runner would have to install first.
+  check:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Type-checks and builds the frontend. `tauri build` would do this too, but
+      # only after a full Rust release build, which is a slow way to learn that a
+      # `.ts` file has a type error.
+      - name: Build frontend
+        run: npm run build
+
+      # No `cargo fmt --check`: this tree is hand-formatted in places rustfmt
+      # would rewrite, so the check would fail on code that is deliberate.
+
+      # `--all-targets` pulls in the test targets, which is where tokio's macros
+      # feature comes from; the plain build below is what catches a feature the
+      # app itself is missing.
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        working-directory: src-tauri
+        run: cargo build
+
+      # The `#[ignore]`d tests are left out: they spawn the real `claude`, which
+      # needs a logged-in subscription no CI runner has.
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test

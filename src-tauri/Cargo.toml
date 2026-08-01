@@ -1,0 +1,54 @@
+[package]
+name = "konjac"
+version = "0.1.0"
+description = "Shortcut-driven translator backed by Claude"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hashibadaiki/idea"
+# This is the application crate, not a library anyone depends on. Keep it off
+# crates.io so a stray `cargo publish` cannot take the name.
+publish = false
+
+[lib]
+name = "konjac_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The window is undecorated and hidden from the taskbar, so the tray icon is
+# what keeps it reachable once it has been dismissed. `macos-private-api` is
+# what `macOSPrivateApi` in tauri.conf.json requires: without it the build
+# refuses the transparent window the rounded slab is drawn in.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "time", "rt"] }
+
+[dev-dependencies]
+# `#[tokio::test]` needs the attribute macro; the app itself does not.
+tokio = { version = "1", features = ["macros", "rt"] }
+
+# Double-copy detection needs the platform's clipboard change counter, which
+# increments even when the same text is copied twice.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSPasteboard",
+  "NSEvent",
+  "block2",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_DataExchange"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

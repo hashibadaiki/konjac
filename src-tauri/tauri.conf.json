@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Konjac",
+  "version": "0.1.0",
+  "identifier": "dev.hashibadaiki.konjac",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Konjac",
+        "width": 460,
+        "height": 540,
+        "minWidth": 360,
+        "minHeight": 380,
+        "resizable": true,
+        "decorations": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "center": true,
+        "visible": true,
+        "transparent": true,
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis"],
+    "category": "Productivity",
+    "shortDescription": "コピー 2 回で開く翻訳アプリ",
+    "longDescription": "⌘C を 2 回押すと開いて、コピーしたテキストをその場で翻訳する。翻訳は手元の Claude Code CLI に投げるので、Claude のサブスクがあれば API キーは要らない。",
+    "license": "MIT OR Apache-2.0",
+    "homepage": "https://github.com/hashibadaiki/konjac",
+    "publisher": "hashibadaiki",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}
