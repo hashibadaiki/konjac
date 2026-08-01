@@ -23,6 +23,22 @@
         この変数が無い環境からアプリを起動してください。
       </p>
 
+      <!--
+        The same ask as `permission-prompt`, but out here where it will actually
+        be seen. The permission decides what the gesture can detect at all, and
+        most people never open the settings pane — so leaving the ask in there
+        means the app quietly runs on the weaker detector forever. Wording comes
+        from the live counters: a user whose copies are being eaten by a
+        dictation tool is told that, not the general pitch.
+      -->
+      <div class="note note--tip hidden" id="permission-banner">
+        <p id="permission-banner-text"></p>
+        <div class="actions">
+          <button class="btn" id="btn-banner-accessibility">アクセシビリティを許可</button>
+          <button class="btn btn--tiny" id="btn-banner-dismiss">あとで</button>
+        </div>
+      </div>
+
       <div class="langbar">
         <select id="source-lang" aria-label="翻訳元の言語"></select>
         <button class="icon-btn icon-btn--swap" id="btn-swap" title="言語を入れ替え">⇄</button>
@@ -138,6 +154,12 @@
           Aqua Voice などはクリップボード経由で文字を貼り付けるため、いまのクリップボード
           監視では 2 回コピーしたのと見分けがつかない。キーボード監視は ⌘C のキーだけを
           見るので、貼り付け（⌘V）では反応しない。
+        </p>
+        <p>
+          許可は<strong>実行ファイルのパスごと</strong>に記録される。
+          <code>npm run tauri dev</code> の開発用バイナリと、<code>npm run tauri build</code>
+          で作った <code>.app</code> は別物として扱われるので、それぞれ許可が要る。未署名
+          ビルドは中身が変わるだけでも許可が外れるが、署名済みのリリース版なら更新をまたいで残る。
         </p>
         <div class="actions">
           <button class="btn" id="btn-open-accessibility">許可設定を開く</button>

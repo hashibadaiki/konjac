@@ -103,6 +103,33 @@ pub fn load(app: &AppHandle) -> Settings {
         .normalized()
 }
 
+/// A one-shot "this already happened" marker, kept beside `settings.json` as an
+/// empty file.
+///
+/// Deliberately not a [`Settings`] field. The frontend rebuilds that struct
+/// field by field every time it saves, so a field it does not know about is
+/// reset to its default on the next save — and the whole point of a marker is
+/// that it survives.
+fn marker_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    Ok(settings_path(app)?.with_file_name(name))
+}
+
+pub fn marker_seen(app: &AppHandle, name: &str) -> bool {
+    marker_path(app, name).is_ok_and(|path| path.exists())
+}
+
+/// Best-effort: a marker that cannot be written costs one repeated prompt, so
+/// there is nothing here worth failing the caller over.
+pub fn mark_seen(app: &AppHandle, name: &str) {
+    let Ok(path) = marker_path(app, name) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, b"");
+}
+
 pub fn store(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let path = settings_path(app)?;
     if let Some(parent) = path.parent() {

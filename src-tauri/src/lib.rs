@@ -4,6 +4,7 @@ mod settings;
 mod translate;
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use clipboard_watch::Watcher;
 use settings::Settings;
@@ -88,9 +89,18 @@ fn clipboard_status(state: State<AppState>) -> clipboard_watch::WatchStatus {
 }
 
 /// Opens the OS pane where the user grants keyboard-observation access.
+///
+/// Asks first, because the pane on its own is not enough: an app appears in the
+/// Accessibility list only once it has requested the permission, so a user sent
+/// there beforehand finds no row to switch on. Asking is idempotent — macOS
+/// keeps the row afterwards whichever way it was answered.
 #[tauri::command]
-fn open_accessibility_settings() {
-    key_watch::open_privacy_settings();
+fn open_accessibility_settings(app: AppHandle) {
+    // The alert is UI, so it belongs on the main thread; commands need not be.
+    let _ = app.run_on_main_thread(|| {
+        key_watch::request_trust();
+        key_watch::open_privacy_settings();
+    });
 }
 
 /// Permission can be granted while the app is running, so re-attempt the
@@ -121,6 +131,9 @@ fn save_settings(
     // Permission may have been granted since startup, and turning the gesture
     // on is the moment the user cares whether the better detector is running.
     if next.double_copy_enabled {
+        // Covers the user who left the gesture off at first launch: that is
+        // when the startup ask is skipped, so this is their first one.
+        request_accessibility_once(&app, &next);
         install_key_watch(&app, &state.watcher);
     }
 
@@ -219,6 +232,15 @@ fn write_clipboard(app: AppHandle, state: State<AppState>, text: String) -> Resu
 
 // ------------------------------------------------------------------ detectors
 
+/// How often to look for the permission having been granted. It is granted in
+/// System Settings — outside this app, with no notification when it lands — so
+/// looking is the only way to notice. `AXIsProcessTrusted` is a cheap local
+/// lookup, and the thread that calls it stops for good once the monitor is up.
+const TRUST_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// The marker that keeps the first-launch permission alert to one appearance.
+const ACCESSIBILITY_ASKED: &str = "accessibility-asked";
+
 /// Installs the keyboard monitor if macOS has granted permission and it is not
 /// already running. Safe to call repeatedly.
 fn install_key_watch(app: &AppHandle, watcher: &Arc<Watcher>) {
@@ -245,7 +267,60 @@ fn install_key_watch(app: &AppHandle, watcher: &Arc<Watcher>) {
 
         if installed {
             watcher.mark_keyboard_active();
+            // The permission can land while a "grant this" prompt is on screen,
+            // and the frontend has no other way to hear that it did.
+            let _ = handle.emit("watch-source-changed", ());
         }
+    });
+}
+
+/// Watches for the permission being granted while the app runs, and promotes
+/// the detector the moment it is.
+///
+/// Without this the user grants the permission, comes back, and nothing has
+/// changed until they find a button to press — which reads as the permission
+/// not having worked.
+fn spawn_trust_poll(app: &AppHandle, watcher: &Arc<Watcher>) {
+    if !key_watch::is_available() || watcher.uses_keyboard() {
+        return;
+    }
+
+    let app = app.clone();
+    let watcher = watcher.clone();
+
+    std::thread::spawn(move || loop {
+        std::thread::sleep(TRUST_POLL_INTERVAL);
+        if watcher.uses_keyboard() {
+            return;
+        }
+        if key_watch::is_trusted() {
+            install_key_watch(&app, &watcher);
+        }
+    });
+}
+
+/// Puts up macOS's own permission alert on the first launch that could use the
+/// permission, the way DeepL does.
+///
+/// Asked once and only once: the alert arrives unprompted, so repeating it
+/// every launch would be nagging — and it has done its lasting job after one
+/// appearance anyway, since that is what puts the app in the Accessibility list
+/// for the user to find later.
+fn request_accessibility_once(app: &AppHandle, settings: &Settings) {
+    if !key_watch::is_available()
+        || !settings.double_copy_enabled
+        || key_watch::is_trusted()
+        || settings::marker_seen(app, ACCESSIBILITY_ASKED)
+    {
+        return;
+    }
+
+    settings::mark_seen(app, ACCESSIBILITY_ASKED);
+    // The alert is UI. Reached from `setup` (already the main thread) and from
+    // saving the settings (a command, which is not), so it is dispatched either
+    // way rather than left to the caller to remember.
+    let _ = app.run_on_main_thread(|| {
+        key_watch::request_trust();
     });
 }
 
@@ -297,6 +372,9 @@ pub fn run() {
                 loaded.double_copy_window_ms,
             ));
 
+            // Before `loaded` is handed over to the state it lives in.
+            request_accessibility_once(&handle, &loaded);
+
             app.manage(AppState {
                 settings: Mutex::new(loaded),
                 watcher: watcher.clone(),
@@ -307,6 +385,9 @@ pub fn run() {
             // poller runs as the no-permission fallback and stands itself down
             // if the monitor comes up later.
             install_key_watch(&handle, &watcher);
+            // Where it is not permitted yet, keep looking, so that granting the
+            // permission is the whole of what the user has to do.
+            spawn_trust_poll(&handle, &watcher);
 
             let watch_handle = handle.clone();
             clipboard_watch::spawn(watcher, move || {

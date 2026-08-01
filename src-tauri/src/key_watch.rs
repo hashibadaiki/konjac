@@ -12,6 +12,7 @@
 
 #[cfg(target_os = "macos")]
 mod imp {
+    use std::ffi::c_void;
     use std::ptr::NonNull;
 
     /// `kVK_ANSI_C`. Virtual key codes are positional, so this is the physical
@@ -21,12 +22,41 @@ mod imp {
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
+        /// The same test as [`AXIsProcessTrusted`], except the options
+        /// dictionary can ask macOS to put its own alert up when the answer is
+        /// no. Takes a `CFDictionaryRef`.
+        fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+        /// `CFStringRef`. Typed as an opaque pointer so the `extern` block
+        /// stays FFI-safe; it is cast where it is used.
+        static kAXTrustedCheckOptionPrompt: *const c_void;
     }
 
     /// Whether this app may observe keyboard events. Without it the monitor
     /// installs cleanly but never receives anything.
     pub fn is_trusted() -> bool {
         unsafe { AXIsProcessTrusted() }
+    }
+
+    /// Asks for the permission, putting up the system alert when it is missing.
+    ///
+    /// This is also the only way the app gets into the Accessibility list at
+    /// all — an app cannot add its own row, so until it has asked once, sending
+    /// the user to the permission pane sends them to a list this app is not in
+    /// and there is nothing there to switch on.
+    ///
+    /// Returns whether permission is already in hand. The alert is answered
+    /// outside this process, so `false` means "not yet", never "refused".
+    pub fn request_trust() -> bool {
+        use objc2_foundation::{NSDictionary, NSNumber, NSString};
+
+        // Safety: the framework owns this string for the life of the process,
+        // and CFString is toll-free bridged to NSString.
+        let key: &NSString = unsafe { &*(kAXTrustedCheckOptionPrompt as *const NSString) };
+        let prompt = NSNumber::new_bool(true);
+        let options = NSDictionary::from_slices(&[key], &[&*prompt]);
+        let options: *const NSDictionary<NSString, NSNumber> = &*options;
+
+        unsafe { AXIsProcessTrustedWithOptions(options.cast()) }
     }
 
     pub fn open_privacy_settings() {
@@ -83,6 +113,10 @@ mod imp {
         false
     }
 
+    pub fn request_trust() -> bool {
+        false
+    }
+
     pub fn open_privacy_settings() {}
 
     pub fn install<F>(_on_copy: F) -> bool
@@ -93,7 +127,7 @@ mod imp {
     }
 }
 
-pub use imp::{install, is_trusted, open_privacy_settings};
+pub use imp::{install, is_trusted, open_privacy_settings, request_trust};
 
 /// Whether this platform has a keyboard-level path at all.
 pub const fn is_available() -> bool {
