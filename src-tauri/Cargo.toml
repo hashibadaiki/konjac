@@ -42,6 +42,15 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
   "NSEvent",
   "block2",
 ] }
+# `AXIsProcessTrustedWithOptions` takes a `CFDictionaryRef`, and `NSDictionary`
+# is toll-free bridged to one — so the options can be built without pulling in
+# CoreFoundation bindings of their own.
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSDictionary",
+  "NSString",
+  "NSValue",
+] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_DataExchange"] }

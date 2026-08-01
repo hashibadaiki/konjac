@@ -155,6 +155,11 @@ const el = {
 
   apiKeyWarning: $<HTMLParagraphElement>("api-key-warning"),
 
+  permissionBanner: $<HTMLDivElement>("permission-banner"),
+  permissionBannerText: $<HTMLParagraphElement>("permission-banner-text"),
+  btnBannerAccessibility: $<HTMLButtonElement>("btn-banner-accessibility"),
+  btnBannerDismiss: $<HTMLButtonElement>("btn-banner-dismiss"),
+
   setupHead: $<HTMLHeadingElement>("setup-head"),
   setupLead: $<HTMLParagraphElement>("setup-lead"),
   setupStepInstall: $<HTMLParagraphElement>("setup-step-install"),
@@ -216,6 +221,12 @@ const el = {
 let settings: Settings;
 let busy = false;
 let doubleCopySupported = false;
+/**
+ * Whether the main pane's permission banner has been waved off. Session-only:
+ * the ask is still true next launch, and dropping it for good would leave the
+ * settings pane as the only place it is ever made again.
+ */
+let permissionDismissed = false;
 
 /** Identifies the run whose fragments may be written to the output box. */
 let streamSeq = 0;
@@ -436,6 +447,17 @@ async function refreshDiagnostics() {
     !status.needsPermission || !el.setDoubleCopy.checked,
   );
 
+  // The main pane asks off the saved setting rather than the checkbox: it is
+  // read while the settings pane is closed, where an unsaved tick means nothing.
+  el.permissionBanner.classList.toggle(
+    "hidden",
+    !status.needsPermission || !status.enabled || permissionDismissed,
+  );
+  el.permissionBannerText.textContent =
+    status.burstsIgnored > 0
+      ? `他のアプリ（音声入力ソフトなど）がクリップボードを書き換えていて、${status.burstsIgnored} 回それを無視した。取りこぼしや誤爆があるなら、アクセシビリティを許可するとキー入力そのものを見るようになるので起きなくなる。`
+      : `いまはクリップボード監視。${MOD_KEY} を押したまま C を 2 回は反応しない。アクセシビリティを許可するとキーボード監視に切り替わり、押したままでも反応する。`;
+
   if (status.source === "none") {
     el.diagHint.textContent = "検出器が動いていない。起動直後なら数秒待つ。";
   } else if (status.copiesSeen === 0 && status.burstsIgnored > 0) {
@@ -452,12 +474,26 @@ async function refreshDiagnostics() {
   }
 }
 
-function setDiagnosticsPolling(active: boolean) {
+/**
+ * How often the counters are re-read, per pane. The settings pane puts the raw
+ * numbers on screen and they are meant to move as you press keys; the main pane
+ * only needs the permission banner to turn up, which can take its time. The
+ * setup pane shows neither.
+ */
+const DIAG_INTERVAL: Partial<Record<Pane, number>> = {
+  settings: 300,
+  translate: 2000,
+};
+
+function setDiagnosticsPolling(pane: Pane) {
   window.clearInterval(diagTimer);
   diagTimer = undefined;
-  if (!active) return;
+
+  const interval = doubleCopySupported ? DIAG_INTERVAL[pane] : undefined;
+  if (!interval) return;
+
   void refreshDiagnostics();
-  diagTimer = window.setInterval(refreshDiagnostics, 300);
+  diagTimer = window.setInterval(refreshDiagnostics, interval);
 }
 
 function readSettingsFromUi(): Settings {
@@ -552,8 +588,8 @@ function showPane(pane: Pane) {
   el.paneTranslate.classList.toggle("hidden", pane !== "translate");
   el.paneSettings.classList.toggle("hidden", pane !== "settings");
   el.paneSetup.classList.toggle("hidden", pane !== "setup");
-  // The counters are only worth polling while they are on screen.
-  setDiagnosticsPolling(pane === "settings" && doubleCopySupported);
+  // The counters are only worth polling while something reads them.
+  setDiagnosticsPolling(pane);
   if (pane === "settings") {
     el.setClaudeBin.focus();
   } else if (pane === "translate") {
@@ -699,6 +735,15 @@ el.btnRecheckAccessibility.addEventListener("click", async () => {
   await refreshDiagnostics();
 });
 
+el.btnBannerAccessibility.addEventListener("click", () =>
+  invoke("open_accessibility_settings"),
+);
+
+el.btnBannerDismiss.addEventListener("click", () => {
+  permissionDismissed = true;
+  el.permissionBanner.classList.add("hidden");
+});
+
 el.setDoubleCopy.addEventListener("change", () => {
   syncTriggerFields();
   if (el.setDoubleCopy.checked) void refreshDiagnostics();
@@ -774,6 +819,13 @@ listen<DeltaPayload>("translate-delta", (event) => {
   // Long results outgrow the box; follow the text rather than stranding the view
   // at the top.
   el.output.scrollTop = el.output.scrollHeight;
+});
+
+// The Rust side watches for the Accessibility permission being granted and
+// promotes the detector by itself, so the switch can happen between two ticks of
+// the poll above — or while the pane that is asking for it sits on screen.
+listen("watch-source-changed", () => {
+  void refreshDiagnostics();
 });
 
 // Fired by the Rust side when the ⌘C ⌘C gesture is detected. That gesture is an
