@@ -14,6 +14,52 @@ permissions:
   contents: write
 
 jobs:
+  # Signing is not a nice-to-have for this app: it asks for Accessibility
+  # permission, so whoever installs it has to be able to tie the binary to a
+  # known developer. An empty APPLE_SIGNING_IDENTITY makes Tauri skip signing
+  # silently, so the missing secret would otherwise only show up as a .dmg
+  # nobody can verify. Cheaper to stop here, before two runners spend twenty
+  # minutes building something we would refuse to publish.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the Apple signing and notarisation secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+                      APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              missing="$missing $name"
+            fi
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::missing Apple secrets:$missing — see README (macOS の署名と公証)"
+            exit 1
+          fi
+
+          # Only a Developer ID Application certificate produces something
+          # Gatekeeper accepts; the Apple Development certificate Xcode makes on
+          # its own signs fine and then fails notarisation at the very end.
+          case "$APPLE_SIGNING_IDENTITY" in
+            "Developer ID Application:"*) ;;
+            *)
+              echo "::error::APPLE_SIGNING_IDENTITY must be a 'Developer ID Application: …' identity"
+              exit 1
+              ;;
+          esac
+
+          echo "all Apple signing secrets present"
+
   # The release is created once, up front, so the two build jobs have something
   # to upload to. Letting each of them create-or-find it races when they start at
   # the same moment, which is exactly what a matrix does.
@@ -70,7 +116,7 @@ jobs:
             return data.id
 
   build:
-    needs: draft
+    needs: [preflight, draft]
     strategy:
       # One platform failing should not throw away the other's finished build.
       fail-fast: false
@@ -110,10 +156,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signing and notarisation. All of these are absent until the Apple
-          # secrets are added to the repository, and Tauri simply skips signing
-          # when APPLE_SIGNING_IDENTITY is empty — so this workflow produces a
-          # working (if unsigned) .dmg before any of that is set up.
+          # Signing and notarisation. `preflight` has already refused to let the
+          # workflow get this far with any of them missing, so an unsigned build
+          # here means Tauri failed to use them, not that they are absent.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -124,10 +169,174 @@ jobs:
           releaseId: ${{ needs.draft.outputs.release_id }}
           args: ${{ matrix.args }}
 
-  # Only flips the release visible once both platforms have uploaded, so nobody
-  # finds a release carrying just one of the two installers.
-  publish:
+  # Checks the file that people will actually download, pulled back out of the
+  # draft release, rather than the build tree it came from. A .dmg that is fine
+  # on the build runner and broken as an upload is exactly the failure this is
+  # here to catch. Everything below runs against the mounted image.
+  verify:
     needs: [draft, build]
+    runs-on: macos-14
+    steps:
+      - name: Download the release assets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const { owner, repo } = context.repo
+            const release_id = ${{ needs.draft.outputs.release_id }}
+
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner, repo, release_id, per_page: 100,
+            })
+            if (assets.length === 0) throw new Error('the release has no assets')
+
+            fs.mkdirSync('assets', { recursive: true })
+            for (const asset of assets) {
+              // The browser_download_url 404s while the release is a draft, so
+              // the asset has to come through the API with an octet-stream
+              // Accept header.
+              const { data } = await github.request(
+                'GET /repos/{owner}/{repo}/releases/assets/{asset_id}',
+                { owner, repo, asset_id: asset.id, headers: { accept: 'application/octet-stream' } },
+              )
+              fs.writeFileSync(`assets/${asset.name}`, Buffer.from(data))
+              core.info(`downloaded ${asset.name} (${asset.size} bytes)`)
+            }
+
+      - name: Verify the .dmg is signed, notarised and stapled
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          dmgs=(assets/*.dmg)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .dmg on the release, found ${#dmgs[@]}"
+            exit 1
+          fi
+          dmg="${dmgs[0]}"
+          echo "verifying $dmg"
+
+          # The disk image carries its own signature and notarisation ticket.
+          # Stapling matters because it is what lets a first launch succeed with
+          # no network: without the ticket, Gatekeeper has to ask Apple.
+          codesign --verify --strict --verbose=2 "$dmg"
+          xcrun stapler validate "$dmg"
+
+          # `|| true` so a rejection reaches the log as the message spctl wrote
+          # rather than as a bare non-zero exit; the check below still fails it.
+          assess=$(spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg" 2>&1) || true
+          echo "$assess"
+          case "$assess" in
+            *"source=Notarized Developer ID"*) ;;
+            *)
+              echo "::error::the .dmg is not accepted as a Notarized Developer ID"
+              exit 1
+              ;;
+          esac
+
+      - name: Verify the .app inside the .dmg
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          dmg=$(ls assets/*.dmg)
+          mount=$(mktemp -d)
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+
+          apps=("$mount"/*.app)
+          if [ "${#apps[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .app in the .dmg, found ${#apps[@]}"
+            exit 1
+          fi
+          app="${apps[0]}"
+          echo "verifying $app"
+
+          # --deep so the two slices of the universal binary and every nested
+          # framework are checked, --strict so a resource added after signing is
+          # an error rather than a warning.
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          details=$(codesign --display --verbose=4 "$app" 2>&1) || true
+          echo "$details"
+          case "$details" in
+            *"Authority=Developer ID Application:"*) ;;
+            *)
+              echo "::error::the .app is not signed with a Developer ID Application certificate"
+              exit 1
+              ;;
+          esac
+          case "$details" in
+            *"TeamIdentifier=not set"* | *"Signature=adhoc"*)
+              echo "::error::the .app carries an ad-hoc signature, not a team's"
+              exit 1
+              ;;
+          esac
+
+          # This is the check that fails when notarisation was skipped or the
+          # ticket never came back: a signed-but-unnotarised app assesses as
+          # "source=Developer ID" without the "Notarized".
+          assess=$(spctl --assess --type execute --verbose=4 "$app" 2>&1) || true
+          echo "$assess"
+          case "$assess" in
+            *"source=Notarized Developer ID"*) ;;
+            *)
+              echo "::error::the .app is not accepted as a Notarized Developer ID"
+              exit 1
+              ;;
+          esac
+
+          xcrun stapler validate "$app"
+
+      # Published so that anyone can check the file they downloaded is the file
+      # this workflow built, which is the other half of being able to trust an
+      # app that asks for Accessibility permission.
+      - name: Generate the SHA-256 checksums
+        id: sums
+        run: |
+          set -euo pipefail
+
+          # A re-run downloads the previous run's checksum file along with
+          # everything else; hashing it into its own successor is not useful.
+          rm -f assets/SHA256SUMS.txt
+          (cd assets && shasum -a 256 -- *) > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attach the checksums to the release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const { owner, repo } = context.repo
+            const release_id = ${{ needs.draft.outputs.release_id }}
+            const name = 'SHA256SUMS.txt'
+            const sums = fs.readFileSync(name, 'utf8')
+
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner, repo, release_id, per_page: 100,
+            })
+            for (const asset of assets.filter((a) => a.name === name)) {
+              await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id })
+            }
+            await github.rest.repos.uploadReleaseAsset({
+              owner, repo, release_id, name, data: sums,
+            })
+
+            // Also in the notes, where someone comparing a hash by eye will
+            // actually look. The marker keeps a re-run replacing its own
+            // section instead of stacking another copy underneath.
+            const marker = '<!-- sha256sums -->'
+            const section = `${marker}\n\n## チェックサム (SHA-256)\n\n\`\`\`\n${sums}\`\`\`\n`
+            const { data } = await github.rest.repos.getRelease({ owner, repo, release_id })
+            const body = data.body || ''
+            const kept = body.includes(marker) ? body.slice(0, body.indexOf(marker)) : `${body}\n\n`
+            await github.rest.repos.updateRelease({ owner, repo, release_id, body: kept + section })
+
+  # Only flips the release visible once both platforms have uploaded and the
+  # macOS artifact has been verified, so nobody finds a release carrying just one
+  # of the two installers — or a .dmg that cannot be traced back to us.
+  publish:
+    needs: [draft, build, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
