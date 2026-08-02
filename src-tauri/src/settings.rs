@@ -14,6 +14,10 @@ use tauri::{AppHandle, Manager};
 /// where haiku is already dropping the head of the document at 80,000.
 pub const DEFAULT_MODEL: &str = "sonnet";
 
+/// The marker recording that the user has been told what enabling the gesture
+/// sends, and where, and agreed to it. See [`Settings::gated`].
+pub const CLIPBOARD_CONSENT: &str = "clipboard-consent";
+
 /// Fields dropped since earlier versions (`shortcut`, `shortcut_enabled`,
 /// `auto_translate_clipboard`) are simply ignored when an old `settings.json`
 /// is read: serde skips unknown keys, so nothing else has to be migrated.
@@ -30,9 +34,19 @@ pub struct Settings {
     pub target_lang: String,
     pub tone: String,
     /// Show the window and translate when the user presses ⌘C twice in quick
-    /// succession. Needs a detector — see [`crate::clipboard_watch::is_detectable`].
+    /// succession. Needs a detector — see [`crate::clipboard_watch::is_detectable`]
+    /// — and the user's consent, see [`Settings::gated`].
     pub double_copy_enabled: bool,
     pub double_copy_window_ms: u64,
+    /// Whether a gesture recognized by the *clipboard* detector may start a
+    /// translation on its own, rather than only filling the input box.
+    ///
+    /// Off by default because that detector cannot tell a copy from any other
+    /// app's clipboard write (see [`crate::clipboard_watch`]): a dictation tool
+    /// putting text back would otherwise send whatever was on the clipboard to
+    /// Anthropic with no press of the button. The keyboard detector reads ⌘C
+    /// itself and has no such blind spot, so it is not subject to this.
+    pub clipboard_auto_translate: bool,
     pub auto_copy_result: bool,
     pub timeout_secs: u64,
 }
@@ -45,8 +59,15 @@ impl Default for Settings {
             source_lang: "auto".into(),
             target_lang: "Japanese".into(),
             tone: "default".into(),
-            double_copy_enabled: crate::clipboard_watch::is_detectable(),
+            // Off on a fresh install, on purpose. Watching for the gesture is
+            // what makes the app read the clipboard at all, and a detector that
+            // fires by mistake sends whatever is on it — a password, a token, an
+            // internal document — to Anthropic. That is not a thing to opt a
+            // user into on their behalf; enabling it is their call, made once
+            // they have been told what it does (`gated`).
+            double_copy_enabled: false,
             double_copy_window_ms: 600,
+            clipboard_auto_translate: false,
             auto_copy_result: false,
             // Idle, not total — see `run_cli_streaming`. All it has to cover is
             // the wait for the first event, measured at 2-8 seconds (the CLI
@@ -82,6 +103,31 @@ impl Settings {
         }
         self
     }
+
+    /// Force the gesture off until the user has agreed to what it does.
+    ///
+    /// Applied on the way in *and* on the way out — loading a `settings.json`
+    /// and saving one both pass through here — so the flag can only ever be
+    /// true alongside the consent marker, whether it got there through the
+    /// checkbox, a file copied from another machine, or a hand edit.
+    ///
+    /// It only ever clears the flag. Consent is permission to enable, not an
+    /// instruction to: a user who agreed once and later switched the gesture
+    /// off stays off.
+    pub fn gated(mut self, consented: bool) -> Self {
+        if !consented {
+            self.double_copy_enabled = false;
+        }
+        self
+    }
+}
+
+pub fn consent_granted(app: &AppHandle) -> bool {
+    marker_seen(app, CLIPBOARD_CONSENT)
+}
+
+pub fn grant_consent(app: &AppHandle) {
+    mark_seen(app, CLIPBOARD_CONSENT);
 }
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -96,11 +142,13 @@ pub fn load(app: &AppHandle) -> Settings {
     let Ok(path) = settings_path(app) else {
         return Settings::default();
     };
+    let consented = consent_granted(app);
     std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str::<Settings>(&raw).ok())
         .unwrap_or_default()
         .normalized()
+        .gated(consented)
 }
 
 /// A one-shot "this already happened" marker, kept beside `settings.json` as an
@@ -181,6 +229,40 @@ mod tests {
         assert_eq!(settings.model, "haiku");
         assert_eq!(settings.target_lang, "Japanese");
         assert_eq!(settings.timeout_secs, 30);
+    }
+
+    /// Nothing watches the clipboard on a machine where the app has only ever
+    /// been installed — that is the whole of the opt-in.
+    #[test]
+    fn a_fresh_install_does_not_watch_the_clipboard() {
+        let settings = Settings::default();
+        assert!(!settings.double_copy_enabled);
+        assert!(!settings.clipboard_auto_translate);
+    }
+
+    /// Including when the file on disk says otherwise: a `settings.json` from
+    /// before the gesture became opt-in, or copied from another machine, still
+    /// has to clear consent on *this* one.
+    #[test]
+    fn consent_is_required_before_the_gesture_runs() {
+        let stored: Settings = serde_json::from_str(r#"{"double_copy_enabled":true}"#).unwrap();
+        assert!(stored.double_copy_enabled);
+
+        assert!(!stored.clone().gated(false).double_copy_enabled);
+        assert!(stored.gated(true).double_copy_enabled);
+    }
+
+    /// Consent says the user *may* turn it on, not that it is on. Otherwise
+    /// switching the gesture back off would not stick.
+    #[test]
+    fn consent_alone_does_not_enable_the_gesture() {
+        let settings = Settings {
+            double_copy_enabled: false,
+            ..Settings::default()
+        }
+        .gated(true);
+
+        assert!(!settings.double_copy_enabled);
     }
 
     /// And files written *before* the global shortcut was dropped must load
