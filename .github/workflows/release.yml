@@ -10,8 +10,10 @@ on:
         description: "Tag to build (must already exist)"
         required: true
 
+# Read-only by default, so a job added later starts with the smaller token; the
+# three jobs that actually touch the release opt into `write` themselves.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # The release is created once, up front, so the two build jobs have something
@@ -19,11 +21,17 @@ jobs:
   # the same moment, which is exactly what a matrix does.
   draft:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the draft release
     outputs:
       release_id: ${{ steps.create.outputs.result }}
       tag: ${{ steps.tag.outputs.name }}
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to full commit SHAs rather than tags: this workflow
+      # holds the Apple signing secrets and publishes the installers people
+      # download, so a moved tag would be a way to reach both. The trailing
+      # comment is the version the SHA came from; Dependabot rewrites the pair.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - id: tag
         run: echo "name=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
@@ -44,7 +52,7 @@ jobs:
       # build failure picks up where it left off instead of dying on
       # "already_exists".
       - id: create
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           result-encoding: string
           script: |
@@ -86,28 +94,33 @@ jobs:
             args: ""
 
     runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write # uploads the installers to the release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.draft.outputs.tag }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # `toolchain` is spelled out because the pin is the v1 tag rather than the
+      # `stable` branch, and only the branch defaults the input for us.
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: stable
           targets: ${{ matrix.rust_targets }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: src-tauri
           key: ${{ matrix.platform }}
 
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signing and notarisation. All of these are absent until the Apple
@@ -129,8 +142,10 @@ jobs:
   publish:
     needs: [draft, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # flips the release out of draft
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             await github.rest.repos.updateRelease({

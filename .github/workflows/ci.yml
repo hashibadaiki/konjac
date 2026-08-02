@@ -10,6 +10,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# CI only ever reads the repository. Nothing here publishes, so the token stays
+# read-only instead of inheriting whatever the repository default happens to be.
+permissions:
+  contents: read
+
 jobs:
   # Runs on macOS rather than Linux: it is the platform the app actually ships
   # for, it compiles the macOS-only keyboard monitor (`key_watch.rs`) that Linux
@@ -18,18 +23,25 @@ jobs:
   check:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to full commit SHAs rather than tags: a tag can be
+      # moved to point at different code, and these steps run with the workflow
+      # token. The trailing comment is the version the SHA came from; Dependabot
+      # rewrites both together.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # `toolchain` is spelled out because the pin is the v1 tag rather than the
+      # `stable` branch, and only the branch defaults the input for us.
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: stable
           components: clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: src-tauri
 

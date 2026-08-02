@@ -1,0 +1,16 @@
+version: 2
+
+updates:
+  # The workflows pin every action to a commit SHA, which is safe but frozen:
+  # nothing tells us when an action ships a fix. Dependabot rewrites the SHA and
+  # the version comment together, so upgrades arrive as a reviewable PR rather
+  # than as a tag someone else moved.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # One PR per week covering every action, instead of six that each need their
+    # own CI run.
+    groups:
+      actions:
+        patterns: ["*"]
