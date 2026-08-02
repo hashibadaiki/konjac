@@ -9,6 +9,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Nothing is proposed until it has been public for a week. A release that is
+    # hours old is both where a hijacked tag would show up first and where the
+    # accidental breakage lives; a week is long enough for either to surface
+    # somewhere other than this repository.
+    cooldown:
+      default-days: 7
     # One PR per week covering every action, instead of six that each need their
     # own CI run.
     groups:
