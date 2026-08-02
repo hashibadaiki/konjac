@@ -138,10 +138,61 @@
 
       <label class="field field--row">
         <input id="set-double-copy" type="checkbox" />
-        <span>コピー（⌘C / Ctrl+C）を 2 回押したら開いて、その内容を即翻訳</span>
+        <span>コピー（⌘C / Ctrl+C）を 2 回押したら開いて、クリップボードの内容を翻訳する</span>
       </label>
 
+      <!--
+        The disclosure, shown when the box is ticked for the first time and not
+        again once it has been accepted. It is the only thing standing between a
+        fresh install and the clipboard being read, so it says outright what
+        gets read, when, and where it goes — the vague version ("uses your
+        clipboard") is the one that makes this a privacy problem rather than a
+        feature.
+      -->
+      <div class="note note--warn hidden" id="consent-prompt">
+        <p>
+          <strong>有効にすると、コピーした内容が Anthropic に送信されます。</strong>
+        </p>
+        <p>
+          コピー 2 回を検出した瞬間に<strong>クリップボードの本文を読み取り</strong>、手元の
+          <code>claude</code> CLI（Claude Code）経由で <strong>Anthropic のサーバへ送って</strong>翻訳する。
+          パスワード・アクセストークン・社内文書などがクリップボードに入っている状態で
+          誤検出が起きれば、それらが送られることになる。
+        </p>
+        <p>
+          読み取るのは 2 回目を検出したその瞬間だけで、それ以外のときは本文を見ない
+          （常時見ているのは OS の「変更カウンタ」という数値だけ）。無効のあいだは
+          読み取りも送信も起きない。訳文も原文もこのアプリはディスクに保存しない。
+          送信後の扱いは Claude Code のアカウント設定と Anthropic のプライバシーポリシーに従う。
+        </p>
+        <div class="actions">
+          <button class="btn btn--primary" id="btn-consent-agree">同意して有効にする</button>
+          <button class="btn" id="btn-consent-decline">やめておく</button>
+        </div>
+      </div>
+
+      <!-- Same facts, kept on screen while the feature is on, so "what does this
+           send and when" is answerable after the one-time dialog is gone. -->
+      <p class="note note--warn hidden" id="double-copy-privacy">
+        <strong>送信先:</strong> 2 回目を検出した瞬間にクリップボードの本文を読み、
+        <code>claude</code> CLI（Claude Code）経由で Anthropic に送って翻訳する。
+        チェックを外せば、読み取りも送信も止まる。
+      </p>
+
       <p class="note note--tip hidden" id="double-copy-gesture">—</p>
+
+      <label class="field field--row hidden" id="field-clipboard-auto">
+        <input id="set-clipboard-auto" type="checkbox" />
+        <span>クリップボード監視のときも、開いた時点で自動的に翻訳する</span>
+      </label>
+
+      <p class="note note--tip hidden" id="clipboard-auto-note">
+        既定はオフ。クリップボード監視は「誰が書いたか」が分からないので、音声入力ソフトなどの
+        書き込みをコピー 2 回と取り違えることがある。オフのあいだは入力欄に入れるだけで止め、
+        送信は <strong>⌘/Ctrl+Enter か「翻訳」ボタン</strong>を押したときだけにする。
+        キーボード監視のときは ⌘C のキーそのものを見ていて取り違えようがないので、
+        この設定に関わらず即翻訳する。
+      </p>
 
       <div class="note note--tip hidden" id="permission-prompt">
         <p>

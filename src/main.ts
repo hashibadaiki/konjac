@@ -12,6 +12,7 @@ interface Settings {
   tone: string;
   double_copy_enabled: boolean;
   double_copy_window_ms: number;
+  clipboard_auto_translate: boolean;
   auto_copy_result: boolean;
   timeout_secs: number;
 }
@@ -24,6 +25,8 @@ interface TranslateResult {
 
 interface TriggerPayload {
   text: string | null;
+  /** Which detector fired — see `TRIGGER_KEYBOARD` / `TRIGGER_CLIPBOARD`. */
+  source: "keyboard" | "clipboard";
 }
 
 /** A fragment of a translation in progress, tagged with the run it belongs to. */
@@ -134,6 +137,7 @@ const charLimit = (model: string) =>
 const IS_MAC = navigator.userAgent.includes("Mac");
 const MOD_KEY = IS_MAC ? "⌘" : "Ctrl";
 const COPY_KEY = IS_MAC ? "⌘C" : "Ctrl+C";
+const RUN_KEY = IS_MAC ? "⌘Enter" : "Ctrl+Enter";
 
 // ---------------------------------------------------------------- dom
 
@@ -193,6 +197,13 @@ const el = {
 
   setClaudeBin: $<HTMLInputElement>("set-claude-bin"),
   setDoubleCopy: $<HTMLInputElement>("set-double-copy"),
+  consentPrompt: $<HTMLDivElement>("consent-prompt"),
+  btnConsentAgree: $<HTMLButtonElement>("btn-consent-agree"),
+  btnConsentDecline: $<HTMLButtonElement>("btn-consent-decline"),
+  doubleCopyPrivacy: $<HTMLParagraphElement>("double-copy-privacy"),
+  setClipboardAuto: $<HTMLInputElement>("set-clipboard-auto"),
+  fieldClipboardAuto: $<HTMLLabelElement>("field-clipboard-auto"),
+  clipboardAutoNote: $<HTMLParagraphElement>("clipboard-auto-note"),
   setDoubleCopyWindow: $<HTMLInputElement>("set-double-copy-window"),
   fieldDoubleCopyWindow: $<HTMLLabelElement>("field-double-copy-window"),
   doubleCopyGesture: $<HTMLParagraphElement>("double-copy-gesture"),
@@ -221,6 +232,13 @@ const el = {
 let settings: Settings;
 let busy = false;
 let doubleCopySupported = false;
+/**
+ * Whether the user has been shown what enabling the gesture reads and sends,
+ * and agreed to it. Persisted on the Rust side, which also refuses to save the
+ * flag as on without it — this copy only decides whether ticking the box has to
+ * put the disclosure up first.
+ */
+let clipboardConsent = false;
 /**
  * Whether the main pane's permission banner has been waved off. Session-only:
  * the ask is still true next launch, and dropping it for good would leave the
@@ -370,6 +388,7 @@ function applySettingsToUi() {
   el.setClaudeBin.value = settings.claude_bin;
   el.setDoubleCopy.checked = settings.double_copy_enabled;
   el.setDoubleCopyWindow.value = String(settings.double_copy_window_ms);
+  el.setClipboardAuto.checked = settings.clipboard_auto_translate;
   el.setAutoCopy.checked = settings.auto_copy_result;
   el.setTimeout.value = String(settings.timeout_secs);
 
@@ -386,6 +405,11 @@ function syncTriggerFields() {
   el.doubleCopyGesture.classList.toggle("hidden", !showDoubleCopy);
   el.doubleCopyDiag.classList.toggle("hidden", !showDoubleCopy);
   el.doubleCopyUnsupported.classList.toggle("hidden", doubleCopySupported);
+  // What it reads and where that goes stays on screen for as long as it is on:
+  // the disclosure is shown once, but the answer has to be findable afterwards.
+  el.doubleCopyPrivacy.classList.toggle("hidden", !showDoubleCopy);
+  el.fieldClipboardAuto.classList.toggle("hidden", !showDoubleCopy);
+  el.clipboardAutoNote.classList.toggle("hidden", !showDoubleCopy);
   if (!showDoubleCopy) {
     el.permissionPrompt.classList.add("hidden");
   }
@@ -503,11 +527,16 @@ function readSettingsFromUi(): Settings {
     source_lang: el.sourceLang.value,
     target_lang: el.targetLang.value,
     tone: el.tone.value,
-    double_copy_enabled: doubleCopySupported && el.setDoubleCopy.checked,
+    // The Rust side applies the same three conditions before it stores this —
+    // supported, ticked, consented — so a stale `clipboardConsent` here cannot
+    // turn the watcher on.
+    double_copy_enabled:
+      doubleCopySupported && el.setDoubleCopy.checked && clipboardConsent,
     double_copy_window_ms: Math.min(
       2000,
       Math.max(150, Number(el.setDoubleCopyWindow.value) || 600),
     ),
+    clipboard_auto_translate: el.setClipboardAuto.checked,
     auto_copy_result: el.setAutoCopy.checked,
     timeout_secs: Math.min(600, Math.max(5, Number(el.setTimeout.value) || 30)),
   };
@@ -591,6 +620,9 @@ function showPane(pane: Pane) {
   // The counters are only worth polling while something reads them.
   setDiagnosticsPolling(pane);
   if (pane === "settings") {
+    // Leaving the pane is an answer of sorts: the disclosure comes back the
+    // next time the box is ticked, rather than sitting there half-answered.
+    el.consentPrompt.classList.add("hidden");
     el.setClaudeBin.focus();
   } else if (pane === "translate") {
     el.input.focus();
@@ -744,9 +776,42 @@ el.btnBannerDismiss.addEventListener("click", () => {
   el.permissionBanner.classList.add("hidden");
 });
 
+// Ticking the box is a request to turn it on, not the act of turning it on:
+// until the disclosure has been accepted the tick is undone and the disclosure
+// takes its place, so there is no state in which the clipboard is being read by
+// a user who has not been told so.
 el.setDoubleCopy.addEventListener("change", () => {
+  if (el.setDoubleCopy.checked && !clipboardConsent) {
+    el.setDoubleCopy.checked = false;
+    el.consentPrompt.classList.remove("hidden");
+    syncTriggerFields();
+    return;
+  }
+  el.consentPrompt.classList.add("hidden");
   syncTriggerFields();
   if (el.setDoubleCopy.checked) void refreshDiagnostics();
+});
+
+el.btnConsentAgree.addEventListener("click", async () => {
+  await invoke("grant_clipboard_consent");
+  clipboardConsent = true;
+  el.consentPrompt.classList.add("hidden");
+  el.setDoubleCopy.checked = true;
+  syncTriggerFields();
+  void refreshDiagnostics();
+  // Deliberately not saved here. Consent lifts the gate; the box below is still
+  // the switch, and "保存" is still what commits it — the same as every other
+  // field in this pane.
+  setStatus(
+    el.settingsStatus,
+    "同意を記録しました。「保存」を押すと有効になります。",
+  );
+});
+
+el.btnConsentDecline.addEventListener("click", () => {
+  el.consentPrompt.classList.add("hidden");
+  el.setDoubleCopy.checked = false;
+  syncTriggerFields();
 });
 
 el.btnSettings.addEventListener("click", () =>
@@ -828,8 +893,13 @@ listen("watch-source-changed", () => {
   void refreshDiagnostics();
 });
 
-// Fired by the Rust side when the ⌘C ⌘C gesture is detected. That gesture is an
-// explicit "translate this", so it always does, unlike opening from the tray.
+// Fired by the Rust side when the ⌘C ⌘C gesture is detected.
+//
+// Whether that is an explicit "translate this" depends on which detector saw
+// it. The keyboard monitor watched the user press ⌘C, so it is; the clipboard
+// counter watched *something* write twice and cannot say what, so by default it
+// only loads the box and waits for the user to press 翻訳 — a misread that
+// merely shows you your own clipboard is a nuisance, one that sends it is not.
 listen<TriggerPayload>("trigger-activated", async (event) => {
   // With no usable CLI the gesture still raises the window, but onto the setup
   // pane — there is nothing to paste the clipboard into.
@@ -848,6 +918,13 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   el.input.value = text;
   // Assigning `value` fires no input event, so the warning has to be asked for.
   syncOverflow();
+
+  const confirmed =
+    event.payload.source === "keyboard" || settings.clipboard_auto_translate;
+  if (!confirmed) {
+    setStatus(el.status, `送信前に確認 — ${RUN_KEY} で翻訳`);
+    return;
+  }
   await translate(text);
 });
 
@@ -855,6 +932,7 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
 
 (async () => {
   doubleCopySupported = await invoke<boolean>("platform_supports_double_copy");
+  clipboardConsent = await invoke<boolean>("clipboard_consent");
   settings = await invoke<Settings>("get_settings");
   applySettingsToUi();
 

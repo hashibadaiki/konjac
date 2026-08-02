@@ -10,6 +10,12 @@
 //! Linux has no equivalent counter (X11 exposes selection ownership, not a
 //! write count), so the feature reports itself unsupported there.
 //!
+//! Nothing here reads what is *on* the clipboard. The counter is a number that
+//! goes up; the body is read once, by [`crate::present_clipboard`], at the
+//! moment a double copy is recognized — which is why this watcher only ever
+//! runs with the user's consent ([`crate::settings::Settings::gated`]) and why
+//! [`Watcher::is_enabled`] is checked again at that read.
+//!
 //! The counter's blind spot is *who* wrote. A dictation tool that inserts text
 //! by putting it on the clipboard, pasting, and then putting the user's old
 //! clipboard back produces two writes that the counter cannot tell from two
@@ -98,6 +104,13 @@ impl Watcher {
     pub fn configure(&self, enabled: bool, window_ms: u64) {
         self.enabled.store(enabled, Ordering::Relaxed);
         self.window_ms.store(window_ms, Ordering::Relaxed);
+    }
+
+    /// The single condition under which the clipboard *body* may be read —
+    /// checked again at the read itself, in [`crate::present_clipboard`], rather
+    /// than trusted to hold from whenever the detector last looked.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
     }
 
     /// Call immediately after this app writes to the clipboard.
@@ -407,12 +420,28 @@ mod tests {
         assert_eq!(status.doubles_fired, 0);
     }
 
+    /// Two presses must not pair up while the feature is off, and — the part
+    /// that matters for the clipboard body — `is_enabled` must keep saying no,
+    /// since that is what gates the read.
     #[test]
     fn disabled_watcher_ignores_copies() {
         let watcher = Watcher::new(false, 600);
         assert!(!watcher.note_copy());
         assert!(!watcher.note_copy());
         assert_eq!(watcher.status().copies_seen, 0);
+        assert!(!watcher.is_enabled());
+    }
+
+    /// Turning it off at runtime (unticking the box, or a save that lands while
+    /// a gesture is half-finished) has to shut the read off too.
+    #[test]
+    fn configure_can_withdraw_the_clipboard_read() {
+        let watcher = Watcher::new(true, 600);
+        assert!(watcher.is_enabled());
+
+        watcher.configure(false, 600);
+        assert!(!watcher.is_enabled());
+        assert!(!watcher.note_copy());
     }
 
     #[test]

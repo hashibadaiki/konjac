@@ -25,11 +25,20 @@ fn read_settings(state: &State<AppState>) -> Result<Settings, String> {
         .map_err(|_| "設定の読み込みに失敗しました".to_string())
 }
 
+/// Which detector recognized the gesture. The frontend needs to know, because
+/// only one of them is proof that a person pressed a key: the keyboard monitor
+/// sees ⌘C itself, while the clipboard counter sees *a* write and cannot say
+/// whose. What follows a write it cannot attribute is filling the input box,
+/// not a translation — see [`Settings::clipboard_auto_translate`].
+const TRIGGER_KEYBOARD: &str = "keyboard";
+const TRIGGER_CLIPBOARD: &str = "clipboard";
+
 /// Payload for the frontend when the ⌘C ⌘C gesture fires.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TriggerPayload {
     text: Option<String>,
+    source: &'static str,
 }
 
 /// Brings the window back regardless of how it went away. `show` alone is not
@@ -58,16 +67,30 @@ fn show_window(app: &AppHandle) {
 /// Shows the window and hands the clipboard to the frontend to translate.
 /// Only the ⌘C ⌘C detectors do this: pressing copy twice is an explicit ask,
 /// so it must not clobber the input box on a plain "open the window".
-fn present_clipboard(app: &AppHandle) {
+///
+/// This is the one place in the app that reads what is on the clipboard without
+/// the user asking in so many words, so the condition is checked here rather
+/// than inferred from the caller: the detectors already refuse to fire while the
+/// feature is off, and the feature cannot be on without consent, but a read that
+/// slipped through either of those would be the exact failure this guards.
+fn present_clipboard(app: &AppHandle, source: &'static str) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let Some(window) = handle.get_webview_window("main") else {
             return;
         };
 
-        let text = handle.clipboard().read_text().ok();
+        let enabled = handle
+            .try_state::<AppState>()
+            .is_some_and(|state| state.watcher.is_enabled());
+        let text = if enabled {
+            handle.clipboard().read_text().ok()
+        } else {
+            None
+        };
+
         raise(&window);
-        let _ = handle.emit("trigger-activated", TriggerPayload { text });
+        let _ = handle.emit("trigger-activated", TriggerPayload { text, source });
     });
 }
 
@@ -86,6 +109,21 @@ fn platform_supports_double_copy() -> bool {
 #[tauri::command]
 fn clipboard_status(state: State<AppState>) -> clipboard_watch::WatchStatus {
     state.watcher.status()
+}
+
+/// Whether the user has agreed to the clipboard being read and sent. Asked at
+/// boot so the settings pane knows whether ticking the box needs the disclosure
+/// put in front of the user first.
+#[tauri::command]
+fn clipboard_consent(app: AppHandle) -> bool {
+    settings::consent_granted(&app)
+}
+
+/// Records that the disclosure was shown and accepted. Enabling the gesture is
+/// a separate step — this only lifts the gate, it does not turn anything on.
+#[tauri::command]
+fn grant_clipboard_consent(app: AppHandle) {
+    settings::grant_consent(&app);
 }
 
 /// Opens the OS pane where the user grants keyboard-observation access.
@@ -120,7 +158,10 @@ fn save_settings(
     state: State<AppState>,
     settings: Settings,
 ) -> Result<Settings, String> {
-    let next = settings.normalized();
+    // The frontend asks for consent before it ever sends `double_copy_enabled:
+    // true`, but it is the frontend — the flag is only trustworthy once it has
+    // been through the same gate the loader applies.
+    let next = settings.normalized().gated(settings::consent_granted(&app));
 
     settings::store(&app, &next)?;
 
@@ -261,7 +302,7 @@ fn install_key_watch(app: &AppHandle, watcher: &Arc<Watcher>) {
         let fire_watcher = watcher.clone();
         let installed = key_watch::install(move || {
             if fire_watcher.note_copy() {
-                present_clipboard(&fire_handle);
+                present_clipboard(&fire_handle, TRIGGER_KEYBOARD);
             }
         });
 
@@ -301,6 +342,11 @@ fn spawn_trust_poll(app: &AppHandle, watcher: &Arc<Watcher>) {
 
 /// Puts up macOS's own permission alert on the first launch that could use the
 /// permission, the way DeepL does.
+///
+/// Since the gesture is opt-in that is no longer the first launch, but the one
+/// after it is switched on — which is the better moment for it anyway: an alert
+/// asking to observe the keyboard makes sense next to a feature the user just
+/// asked for, and none at all for one they have not.
 ///
 /// Asked once and only once: the alert arrives unprompted, so repeating it
 /// every launch would be nagging — and it has done its lasting job after one
@@ -391,7 +437,7 @@ pub fn run() {
 
             let watch_handle = handle.clone();
             clipboard_watch::spawn(watcher, move || {
-                present_clipboard(&watch_handle);
+                present_clipboard(&watch_handle, TRIGGER_CLIPBOARD);
             });
 
             // A tray that fails to appear must not stop the app: the window is
@@ -411,6 +457,8 @@ pub fn run() {
             write_clipboard,
             platform_supports_double_copy,
             clipboard_status,
+            clipboard_consent,
+            grant_clipboard_consent,
             open_accessibility_settings,
             recheck_accessibility,
             open_setup_docs
