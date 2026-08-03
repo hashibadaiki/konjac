@@ -32,7 +32,8 @@
 その他の設定は歯車ボタンから。**保存ボタンは無く、触った時点でその場で保存される**
 （テキスト欄は入力が止まってから、またはフォーカスが外れたとき）。保存先は OS の設定
 ディレクトリ配下の `settings.json`
-（macOS なら `~/Library/Application Support/dev.hashibadaiki.konjac/`）。
+（macOS なら `~/Library/Application Support/dev.hashibadaiki.konjac/`。ソースから
+`npm run tauri dev` で動かしたときだけ `.dev` の付いた別ディレクトリを使う）。
 
 ## 入力が長すぎるとき
 
