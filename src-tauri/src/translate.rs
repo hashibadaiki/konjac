@@ -75,6 +75,11 @@ pub struct CliStatus {
     pub streaming: bool,
     /// [`API_KEY_VAR`] is visible to this process.
     pub api_key_in_env: bool,
+    /// What `claude auth status` says, or `None` when the CLI is too old to be
+    /// asked. Worth carrying separately from the version: a CLI that is present
+    /// and new enough still cannot translate a word while signed out, and that
+    /// is not something the flag probes can see.
+    pub logged_in: Option<bool>,
 }
 
 // ------------------------------------------------------------------ prompt
@@ -219,16 +224,39 @@ struct CliEnvelope {
     api_error_status: Option<u16>,
 }
 
+/// What to actually do about being signed out. `/login` only exists inside a
+/// running session, so "log in again" on its own sends people looking for a
+/// shell command that is not there; the two steps are spelled out instead.
+const LOGIN_HELP: &str =
+    "ターミナルで `claude` を起動し、続けて `/login` を実行してログインし直してください。";
+
+/// Whether a failure carrying no HTTP status is nonetheless about being signed
+/// out.
+///
+/// The CLI gives up before it reaches the API when the OAuth session has
+/// expired and cannot be refreshed, so there is no status to match on — the
+/// sentence it wrote is the only signal. Kept deliberately narrow: a failure
+/// this does not recognise still reaches the user verbatim, which is a better
+/// outcome than sending someone to `/login` over an unrelated fault.
+fn reads_as_an_auth_failure(body: &str) -> bool {
+    let body = body.to_ascii_lowercase();
+    ["failed to authenticate", "oauth", "not logged in", "/login"]
+        .iter()
+        .any(|needle| body.contains(needle))
+}
+
 /// The one line worth showing the user, dug out of the ~800-byte envelope.
 fn cli_error_message(envelope: &CliEnvelope) -> String {
     let body = envelope.result.as_deref().unwrap_or_default().trim();
 
     match envelope.api_error_status {
-        Some(401) | Some(403) => format!(
-            "Claude Code の認証が切れています。ターミナルで `claude` を実行して\
-             ログインし直してください。（{body}）"
-        ),
+        Some(401) | Some(403) => {
+            format!("Claude Code の認証が切れています。{LOGIN_HELP}（{body}）")
+        }
         Some(status) => format!("claude がエラーを返しました（HTTP {status}）: {body}"),
+        None if reads_as_an_auth_failure(body) => {
+            format!("Claude Code の認証が切れています。{LOGIN_HELP}（{body}）")
+        }
         None => format!("claude がエラーを返しました: {body}"),
     }
 }
@@ -575,6 +603,41 @@ async fn probe(bin: &Path, flag: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// The `loggedIn` field of `claude auth status --json`; the rest of that object
+/// is the account behind the session, which is not this app's business to show.
+#[derive(Deserialize)]
+struct AuthStatus {
+    #[serde(default, rename = "loggedIn")]
+    logged_in: bool,
+}
+
+/// Whether the CLI has a session, or `None` when it cannot say.
+///
+/// Answered locally out of the credential store, so it costs nothing and works
+/// offline — unlike proving it by translating a word, which is what the app
+/// used to leave the user to discover for themselves.
+async fn probe_auth(bin: &Path) -> Option<bool> {
+    let output = tokio::time::timeout(
+        PROBE_TIMEOUT,
+        tokio::process::Command::new(bin)
+            .args(["auth", "status", "--json"])
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+
+    // Read whether or not the exit status is zero: "signed out" is an answer,
+    // and a CLI is entitled to report it with a non-zero exit. A build too old
+    // to know the subcommand writes nothing parseable, which falls through to
+    // `None` and leaves the question unasked rather than answered wrongly.
+    serde_json::from_str::<AuthStatus>(String::from_utf8_lossy(&output.stdout).trim())
+        .ok()
+        .map(|status| status.logged_in)
+}
+
 /// Which of `wanted` the help text never mentions. An argument parser lists every
 /// flag it accepts in `--help`, and the CLI offers no other way to be asked what
 /// it supports, so this stands in for a capability query.
@@ -600,10 +663,15 @@ pub async fn check_cli(settings: &Settings) -> Result<CliStatus, String> {
         let bin = bin.clone();
         tokio::spawn(async move { probe(&bin, "--help").await })
     };
+    let auth_task = {
+        let bin = bin.clone();
+        tokio::spawn(async move { probe_auth(&bin).await })
+    };
     let version = probe(&bin, "--version").await;
     let help = help_task
         .await
         .unwrap_or_else(|e| Err(format!("claude --help を待てません: {e}")));
+    let logged_in = auth_task.await.unwrap_or(None);
 
     // "2.1.220 (Claude Code)" — the bare version reads better in the title bar.
     let version = version?
@@ -632,6 +700,7 @@ pub async fn check_cli(settings: &Settings) -> Result<CliStatus, String> {
         missing_flags,
         streaming,
         api_key_in_env: std::env::var_os(API_KEY_VAR).is_some_and(|value| !value.is_empty()),
+        logged_in,
     })
 }
 
@@ -900,6 +969,14 @@ mod tests {
         );
         assert!(status.streaming);
         assert!(!status.version.is_empty());
+        // Answered rather than unknown, which is the part worth checking here:
+        // the probe reads a subcommand the CLI is free to rename, and `None`
+        // would fail silently by simply never warning anyone.
+        assert_eq!(
+            status.logged_in,
+            Some(true),
+            "`claude auth status --json` should report the session this test needs"
+        );
     }
 
     /// A bad `--model` value never reaches the API, so it carries no status.
@@ -910,5 +987,63 @@ mod tests {
         ));
         assert!(message.contains("Invalid model name"));
         assert!(!message.contains("HTTP"));
+        // Not every statusless failure is someone being signed out.
+        assert!(!message.contains("/login"));
+    }
+
+    /// The failure a fresh machine actually produces. The CLI gives up before it
+    /// reaches the API, so there is no 401 to match on — which is how this used
+    /// to reach the user as an untranslated sentence with no way forward.
+    #[test]
+    fn an_expired_session_is_an_auth_problem_even_with_no_status() {
+        let message = cli_error_message(&envelope(
+            r#"{"is_error":true,"result":
+               "Failed to authenticate: OAuth session expired and could not be refreshed"}"#,
+        ));
+
+        assert!(message.contains("認証が切れています"));
+        assert!(!message.contains("HTTP"));
+        // The original sentence is kept: it is the only thing that distinguishes
+        // one login failure from another when someone comes to report it.
+        assert!(message.contains("OAuth session expired"));
+    }
+
+    /// Both steps, in order. `/login` is a session command, so naming it without
+    /// naming `claude` first sends people to a shell prompt that has no such
+    /// thing.
+    #[test]
+    fn the_login_advice_names_both_steps() {
+        for raw in [
+            AUTH_FAILURE,
+            r#"{"is_error":true,"result":"Failed to authenticate: OAuth session expired"}"#,
+        ] {
+            let message = cli_error_message(&envelope(raw));
+            assert!(message.contains("`claude`"), "{message}");
+            assert!(message.contains("`/login`"), "{message}");
+        }
+    }
+
+    #[test]
+    fn unrelated_failures_are_not_read_as_being_signed_out() {
+        for body in [
+            "Invalid model name",
+            "Overloaded",
+            "claude: command not found",
+            "ENOSPC: no space left on device",
+        ] {
+            assert!(!reads_as_an_auth_failure(body), "{body}");
+        }
+    }
+
+    #[test]
+    fn the_sentences_a_signed_out_cli_writes_are_recognised() {
+        for body in [
+            "Failed to authenticate: OAuth session expired and could not be refreshed",
+            "You are not logged in",
+            "Please run /login to continue",
+            "OAuth token refresh failed",
+        ] {
+            assert!(reads_as_an_auth_failure(body), "{body}");
+        }
     }
 }
