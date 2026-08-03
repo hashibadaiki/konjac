@@ -201,6 +201,7 @@ const el = {
 
   permissionBanner: $<HTMLDivElement>("permission-banner"),
   permissionBannerText: $<HTMLParagraphElement>("permission-banner-text"),
+  permissionBannerDup: $<HTMLParagraphElement>("permission-banner-dup"),
   btnBannerAccessibility: $<HTMLButtonElement>("btn-banner-accessibility"),
   btnBannerDismiss: $<HTMLButtonElement>("btn-banner-dismiss"),
 
@@ -225,6 +226,8 @@ const el = {
   inputOverflow: $<HTMLParagraphElement>("input-overflow"),
   inputOverflowCount: $<HTMLSpanElement>("input-overflow-count"),
   inputOverflowNote: $<HTMLSpanElement>("input-overflow-note"),
+  confirmHint: $<HTMLParagraphElement>("confirm-hint"),
+  confirmHintKey: $<HTMLSpanElement>("confirm-hint-key"),
   output: $<HTMLTextAreaElement>("output"),
   status: $<HTMLSpanElement>("status"),
 
@@ -288,6 +291,13 @@ let clipboardConsent = false;
  * settings pane as the only place it is ever made again.
  */
 let permissionDismissed = false;
+/**
+ * Whether the user has been sent to the permission pane at least once this
+ * session. The ask that follows — which of the identically named rows to switch
+ * on — only makes sense to someone who is looking at that list, and putting it
+ * in front of everyone else would bury the one sentence that does.
+ */
+let permissionAsked = false;
 /**
  * Whether the first-launch question about the gesture is still unanswered. It
  * outranks the translate pane while it is (see `homePane`), because it is the
@@ -425,6 +435,19 @@ const writeClipboard = (text: string) =>
   invoke<void>("write_clipboard", { text });
 
 /**
+ * The note saying a gesture filled the box on purpose without sending it.
+ *
+ * Put up only by the clipboard detector's path, and taken down by anything that
+ * answers it: translating, or typing something else into the box. The 翻訳
+ * button wobbles as it appears, because the note explains where to look and the
+ * button is the thing being looked for.
+ */
+function setConfirmHint(show: boolean) {
+  el.confirmHint.classList.toggle("hidden", !show);
+  if (show) jiggle(el.btnTranslate);
+}
+
+/**
  * Says nothing until the text is actually over the limit for the model that is
  * selected right now — so it has to be re-run when the model changes, not only
  * when the text does.
@@ -557,6 +580,11 @@ async function refreshDiagnostics() {
     status.burstsIgnored > 0
       ? `他のアプリ（音声入力ソフトなど）がクリップボードを書き換えていて、${status.burstsIgnored} 回それを無視した。取りこぼしや誤爆があるなら、アクセシビリティを許可するとキー入力そのものを見るようになるので起きなくなる。`
       : `いまはクリップボード監視。${MOD_KEY} を押したまま C を 2 回は反応しない。アクセシビリティを許可するとキーボード監視に切り替わり、押したままでも反応する。`;
+  // Granting it is one click, so someone still reading this banner after going
+  // to look has most likely switched on the wrong row: the permission is
+  // recorded per executable, and a machine that also builds this app has a
+  // second one by the same name.
+  el.permissionBannerDup.classList.toggle("hidden", !permissionAsked);
 
   if (status.source === "none") {
     el.diagHint.textContent = "検出器が動いていない。起動直後なら数秒待つ。";
@@ -687,6 +715,8 @@ async function translate(text: string) {
   // The spinner carries the "working on it"; a stale result underneath it would
   // only muddy which text is which.
   setStatus(el.status, "");
+  // Whatever it was waiting to be asked, it has now been asked.
+  setConfirmHint(false);
   el.output.classList.remove("is-error");
   el.output.value = "";
 
@@ -998,7 +1028,12 @@ fillGroupedSelect(el.model, MODEL_GROUPS);
 
 el.btnTranslate.addEventListener("click", () => translate(el.input.value));
 
-el.input.addEventListener("input", syncOverflow);
+el.input.addEventListener("input", () => {
+  syncOverflow();
+  // The note is about the text the gesture put here; typing over it makes it
+  // someone else's text, and the note stale.
+  setConfirmHint(false);
+});
 
 el.btnCopy.addEventListener("click", async () => {
   // Copies whatever is in the box now, edits included.
@@ -1027,18 +1062,25 @@ for (const control of [el.sourceLang, el.targetLang, el.tone, el.model]) {
 // warning should track the dropdown, not the save.
 el.model.addEventListener("change", syncOverflow);
 
-el.btnOpenAccessibility.addEventListener("click", () =>
-  invoke("open_accessibility_settings"),
-);
+/**
+ * Both places that offer the permission — the banner on the main pane and the
+ * settings pane's prompt — go through here, so the follow-up about which of the
+ * identically named rows to switch on is armed by either of them.
+ */
+function openAccessibilitySettings() {
+  permissionAsked = true;
+  void refreshDiagnostics();
+  return invoke("open_accessibility_settings");
+}
+
+el.btnOpenAccessibility.addEventListener("click", openAccessibilitySettings);
 
 el.btnRecheckAccessibility.addEventListener("click", async () => {
   await invoke<WatchStatus>("recheck_accessibility");
   await refreshDiagnostics();
 });
 
-el.btnBannerAccessibility.addEventListener("click", () =>
-  invoke("open_accessibility_settings"),
-);
+el.btnBannerAccessibility.addEventListener("click", openAccessibilitySettings);
 
 el.btnBannerDismiss.addEventListener("click", () => {
   permissionDismissed = true;
@@ -1218,6 +1260,8 @@ listen("watch-source-changed", () => {
 // only loads the box and waits for the user to press 翻訳 — a misread that
 // merely shows you your own clipboard is a nuisance, one that sends it is not.
 listen<TriggerPayload>("trigger-activated", async (event) => {
+  // Answered or not, the previous gesture's note is not about this one.
+  setConfirmHint(false);
   // With no usable CLI the gesture still raises the window, but onto the setup
   // pane — there is nothing to paste the clipboard into.
   showPane(homePane());
@@ -1243,7 +1287,11 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   const confirmed =
     event.payload.source === "keyboard" || settings.clipboard_auto_translate;
   if (!confirmed) {
-    setStatus(el.status, `送信前に確認 — ${RUN_KEY} で翻訳`);
+    // The note says the rest. The status line is cleared rather than reused:
+    // a "失敗" left over from the last run, sitting beside a box that has just
+    // silently filled itself, is the worst reading available.
+    setStatus(el.status, "");
+    setConfirmHint(true);
     return;
   }
   await translate(text);
@@ -1257,6 +1305,7 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   appVersion = await invoke<string>("app_version");
   el.appVersion.textContent = appVersion;
   el.welcomeGesture.textContent = COPY_KEY;
+  el.confirmHintKey.textContent = RUN_KEY;
   settings = await invoke<Settings>("get_settings");
   applySettingsToUi();
 
