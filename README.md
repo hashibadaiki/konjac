@@ -1,75 +1,84 @@
 # Konjac（コンニャク）
 
-**⌘C を 2 回**押すだけで開く、ミニ翻訳アプリ。macOS / Windows。Tauri 2 製。
+English | [日本語](README.ja.md)
+
+A tiny translation app that opens on a **double ⌘C**. macOS / Windows. Built with Tauri 2.
 
 ```
-[⌘C] [⌘C] → ウィンドウ表示 → コピーしたテキストを翻訳 → [Esc] で消える
+[⌘C] [⌘C] → window appears → the copied text is translated → [Esc] to dismiss
 ```
 
-翻訳の中身は **手元の `claude` CLI（Claude Code）をワンショットで叩いて** 実現している。
-つまり Claude のサブスクを持っていれば、API キーなしでそのまま使える。
+Translation itself is done by **shelling out to the `claude` CLI (Claude Code) on your
+machine**, one shot per request. If you have a Claude subscription, it just works — no
+API key needed.
 
-## デモ
+## Demo
 
 https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 
-## ダウンロード
+## Download
 
-**→ [最新版はこちら](../../releases/latest)**
+**→ [Latest release](../../releases/latest)**
 
-| OS | 落とすファイル | 動作確認 |
+| OS | File to grab | Tested |
 |---|---|---|
-| **macOS 13（Ventura）以降** | **`Konjac_x.y.z_universal.dmg`**（Intel / Apple Silicon 共通） | ✅ 実機で確認しているのはこちら |
-| Windows 10 以降 | `Konjac_x.y.z_x64-setup.exe` | ⚠️ ビルドはしているが未検証 |
+| **macOS 13 (Ventura) or later** | **`Konjac_x.y.z_universal.dmg`** (Intel / Apple Silicon) | ✅ this is the one that gets tested |
+| Windows 10 or later | `Konjac_x.y.z_x64-setup.exe` | ⚠️ built and shipped, but never run on real hardware |
 
-開発と動作確認は macOS でやっている。Windows 版もビルドして配布しているが、
-実機で通した記録は無いので、まずは macOS の `.dmg` を勧める
-（→ [インストール](docs/install.md)）。
+Development and testing happen on macOS. Windows installers are built and published on
+every tag, but there is no record of one being launched on an actual machine, so start
+with the macOS `.dmg` (→ [Install](docs/install.md), in Japanese).
 
-> **必要なもの**: [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) が
-> インストール済みで、ログインまで通っていること。無ければ初回起動時に案内が出る。
+> **Requirements**: [Claude Code](https://docs.claude.com/en/docs/claude-code/setup)
+> installed and logged in. If it is missing, the app says so on first launch.
 >
-> **⌘C 2 回は既定でオフ。** 有効にすると、検出した瞬間にクリップボードの本文を読んで
-> Anthropic へ送ることになるので、何が送られるかを提示したうえで同意を取ってから
-> 有効になる（→ [プライバシー](docs/privacy.md)）。
+> **Double ⌘C is off by default.** Turning it on means the app reads the clipboard the
+> moment it detects the gesture and sends that text to Anthropic, so it asks for consent
+> — spelling out what gets sent — before the switch takes (→ [Privacy](docs/privacy.md),
+> in Japanese).
 
-## できること
+## What it does
 
-- **⌘C 2 回で起動して翻訳** — コピーした文字がそのまま入力欄に入る（既定オフ）。
-  アクセシビリティを許可すれば **⌘ を押しっぱなしのまま C を 2 回**でも反応する
-- **トレイ（macOS はメニューバー）常駐** — ウィンドウを閉じても残る。開き直すのと終了はここから
-- 言語 16 種＋入れ替え、文体 4 種、モデル切り替え（`opus` / `sonnet` / `haiku` / `fable`）
-- **ストリーミング表示**・結果のその場編集・自動コピー
-- **更新の通知と、いざというときの停止**（[自動更新はしない](docs/updates.md)）
+- **Double ⌘C to open and translate** — the copied text lands in the input box (off by
+  default). Grant Accessibility and it also catches **C pressed twice while ⌘ is held**
+- **Lives in the tray (menu bar on macOS)** — closing the window keeps it running;
+  reopen and quit from there
+- 16 languages with a swap button, 4 tones, and a model picker
+  (`opus` / `sonnet` / `haiku` / `fable`)
+- **Streaming output**, editable results, optional auto-copy
+- **Update notices and a kill switch** — [no auto-update](docs/updates.md)
 
-## 使い方
+## Usage
 
-| 操作 | 動作 |
+| Action | What happens |
 |---|---|
-| `⌘/Ctrl + C` を 2 回 | ウィンドウを出してコピーした内容を入力欄に入れる。キーボード監視ならそのまま翻訳する（既定オフ） |
-| トレイアイコン → コンニャクを開く | ウィンドウを出す（クリップボードには触らない） |
-| `⌘/Ctrl + Enter` | 翻訳実行 |
-| `Esc` | 設定を閉じる / ウィンドウを隠す |
-| タイトルバーの `−` / `✕` | 最小化 / 隠す（トレイから戻す） |
+| `⌘/Ctrl + C` twice | Shows the window with the copied text in the input box; with keyboard monitoring it translates right away (off by default) |
+| Tray icon → コンニャクを開く | Shows the window (the clipboard is not touched) |
+| `⌘/Ctrl + Enter` | Translate |
+| `Esc` | Close settings / hide the window |
+| `−` / `✕` in the title bar | Minimise / hide (bring it back from the tray) |
 
-設定は歯車ボタンから。保存ボタンは無く、触った時点でその場で保存される。
-→ [使い方の細かいところ](docs/usage.md)
+Settings live behind the gear button. There is no save button — a change is written the
+moment you make it. → [Usage notes](docs/usage.md) (in Japanese)
 
-## ドキュメント
+## Documentation
+
+The detailed docs are written in Japanese.
 
 | | |
 |---|---|
-| [プライバシー](docs/privacy.md) | 何を・いつ送るか。既定でクリップボードを読まない理由 |
-| [インストール](docs/install.md) | Claude Code の準備、初回起動の警告、⌘C 2 回とアクセシビリティの有効化、対応 OS |
-| [使い方](docs/usage.md) | 前面表示、モデルの選び方、設定の保存先 |
-| [仕組み](docs/how-it-works.md) | `claude` の叩き方、ストリーミング、入力長の限界、⌘C ⌘C の検出方式 |
-| [更新の通知とキルスイッチ](docs/updates.md) | 自動更新を入れていない理由と、代わりに入っているもの |
-| [詰まりやすいところ](docs/troubleshooting.md) | `claude` が見つからない、⌘C 2 回が反応しない、など |
-| [開発](docs/development.md) | ビルド、テスト、CI、ディレクトリ構成 |
-| [リリース](docs/release.md) | タグの切り方、署名と公証、配布物の検証 |
+| [プライバシー / Privacy](docs/privacy.md) | What is sent and when, and why the clipboard is not read by default |
+| [インストール / Install](docs/install.md) | Setting up Claude Code, getting past the first-launch warning, enabling double ⌘C and Accessibility, supported OS versions |
+| [使い方 / Usage](docs/usage.md) | Window behaviour, picking a model, where settings are stored |
+| [仕組み / How it works](docs/how-it-works.md) | How `claude` is invoked, streaming, input-length limits, how the double ⌘C is detected |
+| [更新の通知とキルスイッチ / Updates](docs/updates.md) | Why there is no auto-update, and what is there instead |
+| [詰まりやすいところ / Troubleshooting](docs/troubleshooting.md) | `claude` not found, double ⌘C not firing, and friends |
+| [開発 / Development](docs/development.md) | Build, test, CI, directory layout |
+| [リリース / Release](docs/release.md) | Cutting a tag, signing and notarisation, verifying what you downloaded |
 
-## ライセンス
+## Licence
 
-**MIT または Apache License 2.0** のデュアルライセンス
-（[LICENSE-MIT](LICENSE-MIT) / [LICENSE-APACHE](LICENSE-APACHE)）。
-ただし「Konjac」「コンニャク」の名前とアイコンは対象外 → [ライセンス](docs/license.md)
+Dual-licensed under **MIT or Apache License 2.0**
+([LICENSE-MIT](LICENSE-MIT) / [LICENSE-APACHE](LICENSE-APACHE)) — take whichever you
+prefer. The name "Konjac" / "コンニャク" and the icon are **not** covered
+→ [Licence](docs/license.md) (in Japanese)
