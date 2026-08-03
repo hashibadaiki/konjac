@@ -184,6 +184,83 @@ jobs:
           releaseId: ${{ needs.draft.outputs.release_id }}
           args: ${{ matrix.args }}
 
+      # Tauri notarises and staples the .app, then builds the .dmg around it and
+      # only signs that. But the .dmg is what the download lands on, so it is
+      # the .dmg Gatekeeper assesses first, and a signed-but-unnotarised one is
+      # refused — `rejected / source=Unnotarized Developer ID` — before the app
+      # inside gets a say. Apple's advice is to notarise the image you ship, so
+      # that is what this does; the tickets are per-file and the app keeps its
+      # own.
+      - name: Notarise and staple the .dmg
+        if: runner.os == 'macOS'
+        id: dmg
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          dmgs=(src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one built .dmg, found ${#dmgs[@]}"
+            exit 1
+          fi
+          dmg="${dmgs[0]}"
+          echo "notarising $dmg"
+
+          # Everything inside has already been through the notary service, so
+          # this pass is about the image itself and comes back in well under a
+          # minute. `--wait` also turns a rejection into a non-zero exit here
+          # rather than a confusing stapler failure two lines down.
+          xcrun notarytool submit "$dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+
+          echo "path=$dmg" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$dmg")" >> "$GITHUB_OUTPUT"
+
+      # tauri-action has already uploaded the unstapled .dmg by this point, so
+      # the stapled one has to go up over it. Deleting first because the upload
+      # endpoint refuses a name that is already taken rather than replacing it.
+      - name: Replace the .dmg on the release with the stapled one
+        if: runner.os == 'macOS'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DMG_PATH: ${{ steps.dmg.outputs.path }}
+          DMG_NAME: ${{ steps.dmg.outputs.name }}
+        with:
+          script: |
+            const fs = require('fs')
+            const { owner, repo } = context.repo
+            const release_id = ${{ needs.draft.outputs.release_id }}
+            const name = process.env.DMG_NAME
+            const data = fs.readFileSync(process.env.DMG_PATH)
+
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner, repo, release_id, per_page: 100,
+            })
+            for (const asset of assets.filter((a) => a.name === name)) {
+              await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id })
+            }
+
+            // The headers are spelled out because the default JSON content type
+            // would have Octokit treat a 4 MB Buffer as a body to serialise.
+            await github.rest.repos.uploadReleaseAsset({
+              owner, repo, release_id, name, data,
+              headers: {
+                'content-type': 'application/octet-stream',
+                'content-length': data.length,
+              },
+            })
+            core.info(`replaced ${name} with the stapled build (${data.length} bytes)`)
+
   # Checks the file that people will actually download, pulled back out of the
   # draft release, rather than the build tree it came from. A .dmg that is fine
   # on the build runner and broken as an upload is exactly the failure this is
@@ -191,6 +268,12 @@ jobs:
   verify:
     needs: [draft, build]
     runs-on: macos-15
+    permissions:
+      # `write` for what reads like a read: a draft release is invisible to a
+      # token that only has `contents: read`, so listing its assets comes back
+      # 403 rather than empty. Attaching the checksums and editing the notes
+      # need it for the usual reason.
+      contents: write
     steps:
       - name: Download the release assets
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
