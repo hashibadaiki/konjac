@@ -11,15 +11,7 @@
 
 ## デモ
 
-<!--
-  TODO: 画面収録に差し替える。
-  ・動画（.mp4/.mov）: GitHub の issue か PR のコメント欄にドラッグして得られる
-    https://github.com/user-attachments/assets/... の URL を、この下に素の URL として
-    1 行で貼るとプレイヤーとして再生される（リポジトリには入らない）
-  ・GIF にする場合: docs/media/demo.gif に置いて ![デモ](docs/media/demo.gif)
--->
-
-（準備中）
+https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 
 ## ダウンロード
 
