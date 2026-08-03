@@ -45,7 +45,7 @@ jobs:
           done
 
           if [ -n "$missing" ]; then
-            echo "::error::missing Apple secrets:$missing — see README (macOS の署名と公証)"
+            echo "::error::missing Apple secrets:$missing — see docs/release.md (macOS の署名と公証)"
             exit 1
           fi
 
