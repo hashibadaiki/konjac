@@ -145,12 +145,43 @@ pub fn grant_consent(app: &AppHandle) {
     mark_seen(app, CLIPBOARD_CONSENT);
 }
 
-fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+/// Gives a debug build a directory of its own, so `npm run tauri dev` and an
+/// installed release do not write over each other.
+///
+/// Split out from [`config_dir`] and taking the flag as an argument so the
+/// naming can be tested without an `AppHandle`.
+fn scoped(dir: PathBuf, dev: bool) -> PathBuf {
+    if !dev {
+        return dir;
+    }
+    // `with_extension` is not the tool for this: the identifier is spelled with
+    // dots, so it would replace `konjac` rather than append to the whole name.
+    match dir.file_name().and_then(|name| name.to_str()) {
+        Some(name) => dir.with_file_name(format!("{name}.dev")),
+        None => dir,
+    }
+}
+
+/// Where `settings.json` and the one-shot markers live.
+///
+/// The directory is named after `identifier`, which a debug build and a release
+/// build share — so without [`scoped`] they would share this, and what is kept
+/// here is precisely the state that decides what a *first* launch looks like. A
+/// developer's `clipboard-consent`, left over from that morning's `tauri dev`,
+/// is enough to make the installed app skip the welcome pane it was meant to
+/// show and put macOS's own permission alert up cold instead, with nothing on
+/// screen to say what asked for it. Keeping them apart is also the only way to
+/// see that flow a second time without deleting the directory by hand.
+fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
         .map_err(|e| format!("設定ディレクトリを取得できません: {e}"))?;
-    Ok(dir.join("settings.json"))
+    Ok(scoped(dir, cfg!(debug_assertions)))
+}
+
+fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(config_dir(app)?.join("settings.json"))
 }
 
 pub fn load(app: &AppHandle) -> Settings {
@@ -174,7 +205,7 @@ pub fn load(app: &AppHandle) -> Settings {
 /// reset to its default on the next save — and the whole point of a marker is
 /// that it survives.
 fn marker_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
-    Ok(settings_path(app)?.with_file_name(name))
+    Ok(config_dir(app)?.join(name))
 }
 
 pub fn marker_seen(app: &AppHandle, name: &str) -> bool {
@@ -207,6 +238,33 @@ pub fn store(app: &AppHandle, settings: &Settings) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A release build writes where it always has: the suffix must not reach
+    /// the installs people actually run, or an update would look like a wipe.
+    #[test]
+    fn a_release_build_keeps_the_plain_directory() {
+        let dir = PathBuf::from("/Users/x/Library/Application Support/dev.hashibadaiki.konjac");
+        assert_eq!(scoped(dir.clone(), false), dir);
+    }
+
+    /// And a debug build gets its own, appended to the whole identifier rather
+    /// than replacing its last dotted component.
+    #[test]
+    fn a_debug_build_gets_a_directory_of_its_own() {
+        let dir = PathBuf::from("/Users/x/Library/Application Support/dev.hashibadaiki.konjac");
+        assert_eq!(
+            scoped(dir, true),
+            PathBuf::from("/Users/x/Library/Application Support/dev.hashibadaiki.konjac.dev")
+        );
+    }
+
+    /// Nothing sensible to append to, so the plain directory is still better
+    /// than no directory: the two builds sharing it is the old behaviour, and
+    /// failing to find one at all would lose the settings outright.
+    #[test]
+    fn a_nameless_directory_is_left_alone() {
+        assert_eq!(scoped(PathBuf::from("/"), true), PathBuf::from("/"));
+    }
 
     #[test]
     fn blank_fields_fall_back_to_defaults() {

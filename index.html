@@ -53,6 +53,15 @@
       -->
       <div class="note note--tip hidden" id="permission-banner">
         <p id="permission-banner-text"></p>
+        <!--
+          Only after the user has been sent to the permission pane once: it
+          answers "I allowed it and nothing happened", which on a machine that
+          also builds this app is nearly always the wrong row of two.
+        -->
+        <p class="hidden" id="permission-banner-dup">
+          <strong>許可したのに切り替わらないときは、一覧に <code>konjac</code> が 2 つ並んでいないか見る。</strong>開発用ビルドは別物として扱われるので、入れるのは
+          <code>/Applications</code> の方。
+        </p>
         <div class="actions">
           <button class="btn" id="btn-banner-accessibility">アクセシビリティを許可</button>
           <button class="btn btn--tiny" id="btn-banner-dismiss">あとで</button>
@@ -80,6 +89,18 @@
       <p class="overflow hidden" id="input-overflow" role="status" aria-live="polite">
         <span class="overflow__count" id="input-overflow-count"></span>
         <span id="input-overflow-note"></span>
+      </p>
+
+      <!--
+        Why a gesture filled the box and then stopped. The status line next to
+        the 翻訳 button used to be the whole of this, and it is the wrong place
+        for it: one grey clipped line, right-aligned, on a window that has just
+        appeared over whatever you were doing. Read as the app being broken,
+        which is the opposite of what it says.
+      -->
+      <p class="note hidden" id="confirm-hint" role="status" aria-live="polite">
+        クリップボード監視なので、いまの 2 回がキー操作だったのか他のアプリの書き込みだったのか区別できない。勝手に送らずここで止めてある —
+        <strong><span id="confirm-hint-key">⌘Enter</span></strong> か「翻訳」で送る。
       </p>
 
       <div class="actions">
@@ -295,6 +316,10 @@
           <code>npm run tauri dev</code> の開発用バイナリと、<code>npm run tauri build</code>
           で作った <code>.app</code> は別物として扱われるので、それぞれ許可が要る。未署名
           ビルドは中身が変わるだけでも許可が外れるが、署名済みのリリース版なら更新をまたいで残る。
+        </p>
+        <p>
+          <strong>許可したのに切り替わらないときは、一覧に <code>konjac</code> が 2 つ並んでいないか見る。</strong>どちらも同じ名前で出るので、入れるのは
+          <code>/Applications</code> の方。開発用の行は再ビルドのたびに中身が変わって勝手に外れるため、入れっぱなしにしても効かない。
         </p>
         <div class="actions">
           <button class="btn" id="btn-open-accessibility">許可設定を開く</button>
