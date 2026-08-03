@@ -25,7 +25,7 @@ jobs:
   # hand when GitHub retires one — `macos-14` was already deprecated when this
   # was last bumped. Only the newest two images exist at any time, which is also
   # why nothing here can run on the oldest macOS the app claims to support
-  # (README: 対応 OS).
+  # (docs/install.md: 対応 OS).
   check:
     runs-on: macos-15
     steps:
