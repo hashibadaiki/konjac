@@ -5,7 +5,7 @@ description = "Shortcut-driven translator backed by Claude"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/hashibadaiki/idea"
+repository = "https://github.com/hashibadaiki/konjac"
 # This is the application crate, not a library anyone depends on. Keep it off
 # crates.io so a stray `cargo publish` cannot take the name.
 publish = false
