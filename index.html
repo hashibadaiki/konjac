@@ -381,14 +381,32 @@
       </p>
 
       <div class="actions">
-        <button class="btn" id="btn-check-update">いま確認する</button>
+        <button class="btn" id="btn-check-update">新しいバージョンを確認</button>
         <span class="status" id="update-status"></span>
       </div>
 
+      <h2 class="subhead">Claude Code</h2>
+
+      <p class="note note--tip">
+        翻訳は手元の <code>claude</code> に投げている。ここで確かめるのは
+        <strong>見つかるか・オプションが揃っているか・ログイン済みか</strong>の 3 点で、
+        どこかに接続しにいくわけではない。
+      </p>
+
       <div class="actions">
-        <button class="btn" id="btn-check">接続確認</button>
+        <button class="btn" id="btn-check">Claude Code を確認</button>
         <span class="status" id="settings-status"></span>
       </div>
+
+      <!--
+        Shown whenever the CLI is there but signed out. A paragraph rather than
+        the status line beside the button: that one is clipped to a single line,
+        and the two commands are the whole point of saying anything at all.
+      -->
+      <p class="note note--warn hidden" id="login-warning">
+        Claude Code にログインしていません。ターミナルで <code>claude</code> を起動し、
+        続けて <code>/login</code> を実行してください。
+      </p>
     </section>
 
     <script type="module" src="/src/main.ts"></script>

@@ -61,6 +61,8 @@ interface CliStatus {
   missingFlags: string[];
   streaming: boolean;
   apiKeyInEnv: boolean;
+  /** `null` when the CLI is too old to be asked whether it has a session. */
+  loggedIn: boolean | null;
 }
 
 interface WatchStatus {
@@ -184,6 +186,7 @@ const el = {
   btnWelcomeSkip: $<HTMLButtonElement>("btn-welcome-skip"),
 
   apiKeyWarning: $<HTMLParagraphElement>("api-key-warning"),
+  loginWarning: $<HTMLParagraphElement>("login-warning"),
 
   updateBanner: $<HTMLDivElement>("update-banner"),
   updateBannerText: $<HTMLParagraphElement>("update-banner-text"),
@@ -790,6 +793,9 @@ interface CliBlock {
 
 let blocked: CliBlock | null = null;
 
+/** The last answer `check_cli` gave, for the bits `CliBlock` does not carry. */
+let cliStatus: CliStatus | null = null;
+
 /**
  * Probes the CLI and works out whether it can translate. Only updates state and
  * wording; moving to a pane is the caller's decision, so re-checking from the
@@ -801,9 +807,12 @@ async function probeCli(candidate?: Settings): Promise<CliBlock | null> {
     status = await invoke<CliStatus>("check_cli", {
       settings: candidate ?? settings,
     });
+    cliStatus = status;
   } catch (err) {
+    cliStatus = null;
     el.backendBadge.textContent = "claude 未検出";
     el.apiKeyWarning.classList.add("hidden");
+    el.loginWarning.classList.add("hidden");
     return {
       head: "Claude Code が必要です",
       lead:
@@ -815,6 +824,9 @@ async function probeCli(candidate?: Settings): Promise<CliBlock | null> {
   }
 
   el.apiKeyWarning.classList.toggle("hidden", !status.apiKeyInEnv);
+  // `null` is "could not ask", which is not the same as "signed out" and must
+  // not put a warning on screen the user cannot act on.
+  el.loginWarning.classList.toggle("hidden", status.loggedIn !== false);
 
   if (status.missingFlags.length) {
     el.backendBadge.textContent = `claude ${status.version} は古い`;
@@ -829,7 +841,12 @@ async function probeCli(candidate?: Settings): Promise<CliBlock | null> {
     };
   }
 
-  el.backendBadge.textContent = `claude ${status.version}`;
+  // Signed out is worth saying in the title bar too: the CLI is there and new
+  // enough, so every other signal on screen reads as ready.
+  el.backendBadge.textContent =
+    status.loggedIn === false
+      ? `claude ${status.version} · 未ログイン`
+      : `claude ${status.version}`;
   return null;
 }
 
@@ -851,13 +868,30 @@ async function revalidate(candidate?: Settings): Promise<CliBlock | null> {
   return blocked;
 }
 
+/**
+ * What the "Claude Code を確認" button reports.
+ *
+ * The version used to be the whole answer, which is how this could say
+ * everything was fine while the session behind it had expired — the failure
+ * that sends someone to press it in the first place. `loggedIn` is the part
+ * worth pressing for; `null` means the CLI predates `claude auth status`, and
+ * claiming either way would be worse than saying nothing.
+ */
 async function checkCli() {
   setStatus(el.settingsStatus, "確認中…");
   const problem = await revalidate(readSettingsFromUi());
   if (problem) {
     setStatus(el.settingsStatus, `${problem.head} — ${problem.detail}`, "error");
+    return;
+  }
+
+  const found = `claude ${cliStatus?.version ?? "?"}`;
+  if (cliStatus?.loggedIn === false) {
+    setStatus(el.settingsStatus, `${found} · ログインしていません`, "error");
+  } else if (cliStatus?.loggedIn) {
+    setStatus(el.settingsStatus, `${found} · ログイン済み`, "ok");
   } else {
-    setStatus(el.settingsStatus, `${el.backendBadge.textContent} を検出`, "ok");
+    setStatus(el.settingsStatus, `${found} を検出`, "ok");
   }
 }
 
