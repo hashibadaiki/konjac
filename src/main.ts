@@ -2,6 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import {
+  dismiss,
+  fetchAdvisory,
+  fetchLatestTag,
+  isDismissed,
+  type Advisory,
+} from "./update";
+
 // ---------------------------------------------------------------- types
 
 interface Settings {
@@ -15,6 +23,16 @@ interface Settings {
   clipboard_auto_translate: boolean;
   auto_copy_result: boolean;
   timeout_secs: number;
+  check_for_updates: boolean;
+}
+
+/** What the Rust side makes of the versions the frontend fetched. */
+interface Verdict {
+  current: string;
+  /** A newer release exists. */
+  outdated: boolean;
+  /** This build is below the floor a published advisory sets. */
+  blocked: boolean;
 }
 
 interface TranslateResult {
@@ -149,6 +167,7 @@ const $ = <T extends HTMLElement>(id: string): T => {
 
 const el = {
   backendBadge: $<HTMLSpanElement>("backend-badge"),
+  btnHome: $<HTMLButtonElement>("btn-home"),
   btnSettings: $<HTMLButtonElement>("btn-settings"),
   btnMinimize: $<HTMLButtonElement>("btn-minimize"),
   btnClose: $<HTMLButtonElement>("btn-close"),
@@ -156,8 +175,20 @@ const el = {
   paneTranslate: $<HTMLElement>("pane-translate"),
   paneSettings: $<HTMLElement>("pane-settings"),
   paneSetup: $<HTMLElement>("pane-setup"),
+  paneAdvisory: $<HTMLElement>("pane-advisory"),
 
   apiKeyWarning: $<HTMLParagraphElement>("api-key-warning"),
+
+  updateBanner: $<HTMLDivElement>("update-banner"),
+  updateBannerText: $<HTMLParagraphElement>("update-banner-text"),
+  btnUpdateGet: $<HTMLButtonElement>("btn-update-get"),
+  btnUpdateDismiss: $<HTMLButtonElement>("btn-update-dismiss"),
+
+  advisoryLead: $<HTMLParagraphElement>("advisory-lead"),
+  advisoryMessage: $<HTMLParagraphElement>("advisory-message"),
+  advisoryStatus: $<HTMLParagraphElement>("advisory-status"),
+  btnAdvisoryGet: $<HTMLButtonElement>("btn-advisory-get"),
+  btnAdvisoryDetails: $<HTMLButtonElement>("btn-advisory-details"),
 
   permissionBanner: $<HTMLDivElement>("permission-banner"),
   permissionBannerText: $<HTMLParagraphElement>("permission-banner-text"),
@@ -222,6 +253,10 @@ const el = {
   diagHint: $<HTMLParagraphElement>("diag-hint"),
   setAutoCopy: $<HTMLInputElement>("set-auto-copy"),
   setTimeout: $<HTMLInputElement>("set-timeout"),
+  appVersion: $<HTMLSpanElement>("app-version"),
+  setUpdateCheck: $<HTMLInputElement>("set-update-check"),
+  btnCheckUpdate: $<HTMLButtonElement>("btn-check-update"),
+  updateStatus: $<HTMLSpanElement>("update-status"),
   btnSave: $<HTMLButtonElement>("btn-save"),
   btnCheck: $<HTMLButtonElement>("btn-check"),
   settingsStatus: $<HTMLSpanElement>("settings-status"),
@@ -245,6 +280,20 @@ let clipboardConsent = false;
  * settings pane as the only place it is ever made again.
  */
 let permissionDismissed = false;
+
+/** This build's own version, asked for once at boot. */
+let appVersion = "";
+/**
+ * The newest published tag, once a check has found one. Kept so the "あとで"
+ * button knows which version it is waving off.
+ */
+let latestTag: string | null = null;
+/**
+ * Set when a published advisory says this build must not keep being used. It
+ * outranks everything else on screen: see `homePane`, and the refusal at the
+ * top of `translate`.
+ */
+let advisory: Advisory | null = null;
 
 /** Identifies the run whose fragments may be written to the output box. */
 let streamSeq = 0;
@@ -391,6 +440,7 @@ function applySettingsToUi() {
   el.setClipboardAuto.checked = settings.clipboard_auto_translate;
   el.setAutoCopy.checked = settings.auto_copy_result;
   el.setTimeout.value = String(settings.timeout_secs);
+  el.setUpdateCheck.checked = settings.check_for_updates;
 
   syncTriggerFields();
   // The limit depends on the model, so a restored or swapped model can put the
@@ -539,6 +589,7 @@ function readSettingsFromUi(): Settings {
     clipboard_auto_translate: el.setClipboardAuto.checked,
     auto_copy_result: el.setAutoCopy.checked,
     timeout_secs: Math.min(600, Math.max(5, Number(el.setTimeout.value) || 30)),
+    check_for_updates: el.setUpdateCheck.checked,
   };
 }
 
@@ -563,7 +614,9 @@ async function persistChoice() {
 async function translate(text: string) {
   const trimmed = text.trim();
   // ⌘Enter is still live while the setup pane is up, and there is no CLI to ask.
-  if (!trimmed || busy || blocked) return;
+  // A withdrawn build refuses here too: the pane is what says so, this is what
+  // makes it true — including for the ⌘C ⌘C path, which never sees a pane.
+  if (!trimmed || busy || blocked || advisory) return;
 
   setBusy(true);
   // The spinner carries the "working on it"; a stale result underneath it would
@@ -611,12 +664,13 @@ async function translate(text: string) {
 
 // ---------------------------------------------------------------- panes
 
-type Pane = "translate" | "settings" | "setup";
+type Pane = "translate" | "settings" | "setup" | "advisory";
 
 function showPane(pane: Pane) {
   el.paneTranslate.classList.toggle("hidden", pane !== "translate");
   el.paneSettings.classList.toggle("hidden", pane !== "settings");
   el.paneSetup.classList.toggle("hidden", pane !== "setup");
+  el.paneAdvisory.classList.toggle("hidden", pane !== "advisory");
   // The counters are only worth polling while something reads them.
   setDiagnosticsPolling(pane);
   if (pane === "settings") {
@@ -631,9 +685,11 @@ function showPane(pane: Pane) {
 
 /**
  * Where dismissing a pane lands. With no usable CLI the translate pane has
- * nothing to offer, so setup takes its place as the app's resting state.
+ * nothing to offer, so setup takes its place as the app's resting state — and a
+ * withdrawn build has less to offer still, so the advisory outranks even that.
  */
-const homePane = (): Pane => (blocked ? "setup" : "translate");
+const homePane = (): Pane =>
+  advisory ? "advisory" : blocked ? "setup" : "translate";
 
 // ------------------------------------------------------------------ cli state
 
@@ -717,6 +773,90 @@ async function checkCli() {
     setStatus(el.settingsStatus, `${problem.head} — ${problem.detail}`, "error");
   } else {
     setStatus(el.settingsStatus, `${el.backendBadge.textContent} を検出`, "ok");
+  }
+}
+
+// ------------------------------------------------------------------ updates
+
+/**
+ * The "a newer version exists" banner. Never shown next to an advisory: being
+ * told an update is available is noise beside being told to stop.
+ */
+function renderUpdateBanner() {
+  const show = !!latestTag && !advisory && !isDismissed(latestTag);
+  el.updateBanner.classList.toggle("hidden", !show);
+  if (!show) return;
+  el.updateBannerText.textContent = `新しいバージョン ${latestTag} が出ています（いまは ${appVersion}）。`;
+}
+
+function renderAdvisory() {
+  if (!advisory) return;
+  el.advisoryLead.textContent =
+    `いま入っている ${appVersion} に、使い続けないほうがよい問題が見つかりました。` +
+    "翻訳は止めてあります。新しい版に入れ替えてください。";
+  // `textContent`, not `innerHTML`: this wording came off the network.
+  el.advisoryMessage.textContent = advisory.message ?? "";
+  el.advisoryMessage.classList.toggle("hidden", !advisory.message);
+  el.btnAdvisoryDetails.classList.toggle("hidden", !advisory.url);
+}
+
+/**
+ * Asks GitHub what the newest release is, and whether this build has been
+ * withdrawn.
+ *
+ * Every fetch behind this fails open (see `update.ts`), so a launch that cannot
+ * reach the network behaves exactly as it did before any of this existed.
+ * `manual` is the button in the settings pane, which ignores both the
+ * once-a-day cache and the setting — pressing it *is* the user asking.
+ */
+async function runUpdateCheck(manual = false) {
+  if (manual) setStatus(el.updateStatus, "確認中…");
+
+  // The advisory is asked for on every launch and whatever the setting says.
+  const published = await fetchAdvisory();
+  const wantsNotice = manual || settings.check_for_updates;
+  const newest = wantsNotice ? await fetchLatestTag(manual) : null;
+
+  let verdict: Verdict;
+  try {
+    verdict = await invoke<Verdict>("check_versions", {
+      latest: newest,
+      minimum: published?.minimumVersion ?? null,
+    });
+  } catch {
+    if (manual) setStatus(el.updateStatus, "確認できませんでした", "error");
+    return;
+  }
+
+  latestTag = verdict.outdated ? newest : null;
+
+  const wasBlocked = !!advisory;
+  advisory = verdict.blocked ? published : null;
+  renderAdvisory();
+  renderUpdateBanner();
+
+  // Being pulled out of whatever pane you were on is the point — a stop notice
+  // that can sit unread behind the pane you were using is not a stop. Only on
+  // the way in, so a later re-check does not keep yanking; and on the way out,
+  // so lifting an advisory hands the app back rather than stranding the pane.
+  if (advisory && !wasBlocked) {
+    // Refusing to translate is half a stop. The watcher is what reads the
+    // clipboard at all, so it stands down too — for this run only, so lifting
+    // the advisory hands the setting back rather than making the user re-tick.
+    await invoke("halt_watching").catch(() => {});
+    showPane("advisory");
+  }
+  if (!advisory && wasBlocked) showPane(homePane());
+
+  if (!manual) return;
+  if (verdict.blocked) {
+    setStatus(el.updateStatus, "このバージョンは使えません", "error");
+  } else if (verdict.outdated) {
+    setStatus(el.updateStatus, `${newest} が出ています`, "ok");
+  } else if (newest) {
+    setStatus(el.updateStatus, `最新です（${appVersion}）`, "ok");
+  } else {
+    setStatus(el.updateStatus, "確認できませんでした", "error");
   }
 }
 
@@ -818,6 +958,31 @@ el.btnSettings.addEventListener("click", () =>
   showPane(el.paneSettings.classList.contains("hidden") ? "settings" : homePane()),
 );
 
+// The name in the titlebar is the way back, the way a site's logo is.
+el.btnHome.addEventListener("click", () => showPane(homePane()));
+
+el.btnUpdateGet.addEventListener("click", () => invoke("open_releases_page"));
+
+el.btnUpdateDismiss.addEventListener("click", () => {
+  if (latestTag) dismiss(latestTag);
+  el.updateBanner.classList.add("hidden");
+});
+
+el.btnAdvisoryGet.addEventListener("click", () => invoke("open_releases_page"));
+
+el.btnAdvisoryDetails.addEventListener("click", async () => {
+  if (!advisory?.url) return;
+  try {
+    // The Rust side checks the URL again before opening it, and says no by
+    // returning an error rather than by quietly doing nothing.
+    await invoke("open_advisory", { url: advisory.url });
+  } catch (err) {
+    setStatus(el.advisoryStatus, String(err), "error");
+  }
+});
+
+el.btnCheckUpdate.addEventListener("click", () => runUpdateCheck(true));
+
 el.btnSetupRecheck.addEventListener("click", async () => {
   setStatus(el.setupStatus, "確認中…");
   const problem = await revalidate();
@@ -907,7 +1072,11 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   // The window arrives unasked-for over whatever you were doing, so the slab
   // lands with a wobble rather than just appearing. True of the setup pane too.
   jiggle(document.body);
-  if (blocked) return;
+  // A withdrawn build shows the advisory and stops there — nothing gets put in
+  // a box it is not going to translate. The watcher is stood down when the
+  // advisory lands, so in practice this only catches a gesture already in
+  // flight when it did.
+  if (blocked || advisory) return;
 
   el.input.focus();
   el.input.select();
@@ -933,6 +1102,8 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
 (async () => {
   doubleCopySupported = await invoke<boolean>("platform_supports_double_copy");
   clipboardConsent = await invoke<boolean>("clipboard_consent");
+  appVersion = await invoke<string>("app_version");
+  el.appVersion.textContent = appVersion;
   settings = await invoke<Settings>("get_settings");
   applySettingsToUi();
 
@@ -940,4 +1111,8 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   // already up and the badge reads "…" while it happens.
   await revalidate();
   showPane(homePane());
+
+  // Last, and deliberately not awaited: this one goes to the network, and the
+  // app has to be usable before it answers rather than after.
+  void runUpdateCheck();
 })();

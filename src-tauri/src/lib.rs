@@ -2,6 +2,7 @@ mod clipboard_watch;
 mod key_watch;
 mod settings;
 mod translate;
+mod update;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -231,12 +232,12 @@ async fn check_cli(settings: Settings) -> Result<translate::CliStatus, String> {
     translate::check_cli(&settings.normalized()).await
 }
 
-/// Opens the Claude Code install page in the default browser. Takes no argument
-/// on purpose: the URL is a constant, so the frontend cannot aim this anywhere.
-#[tauri::command]
-fn open_setup_docs() {
-    let url = translate::SETUP_DOCS_URL;
-
+/// Hands a URL to whatever the platform opens links with.
+///
+/// Private, and every caller passes either a constant or a string that has been
+/// through [`update::is_advisory_url`] — the frontend never reaches this with a
+/// URL of its own choosing.
+fn open_external(url: &str) {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = std::process::Command::new("open");
@@ -246,7 +247,9 @@ fn open_setup_docs() {
     #[cfg(target_os = "windows")]
     let mut command = {
         // `start` is a shell builtin, not a program, and the empty string is the
-        // window title `start` would otherwise take the URL for.
+        // window title `start` would otherwise take the URL for. Going through
+        // `cmd` is also why an advisory's URL is checked for shell syntax
+        // before it gets here.
         let mut command = std::process::Command::new("cmd");
         command.args(["/C", "start", "", url]);
         command
@@ -259,6 +262,71 @@ fn open_setup_docs() {
     };
 
     let _ = command.spawn();
+}
+
+/// Opens the Claude Code install page in the default browser. Takes no argument
+/// on purpose: the URL is a constant, so the frontend cannot aim this anywhere.
+#[tauri::command]
+fn open_setup_docs() {
+    open_external(translate::SETUP_DOCS_URL);
+}
+
+/// What this build calls itself. Shown in the settings pane, and compared
+/// against what GitHub reports — see [`check_versions`].
+#[tauri::command]
+fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+/// Weighs this build against the newest release and the floor a published
+/// advisory sets. Both come from the frontend, which did the fetching; the
+/// comparison — and so the decision to stop translating — is made here.
+#[tauri::command]
+fn check_versions(
+    app: AppHandle,
+    latest: Option<String>,
+    minimum: Option<String>,
+) -> update::Verdict {
+    update::verdict(
+        &app.package_info().version.to_string(),
+        latest.as_deref(),
+        minimum.as_deref(),
+    )
+}
+
+/// Stands the ⌘C ⌘C watcher down for the rest of this run, without touching
+/// what is on disk.
+///
+/// Called when an advisory withdraws this build. Refusing to translate is only
+/// half a stop: the watcher is what reads the clipboard in the first place, and
+/// on a build people have been told to stop using it should not keep doing that
+/// while they go and fetch the fixed one. Nothing is persisted, so lifting the
+/// advisory gives the setting back at the next launch rather than leaving the
+/// user with a box they have to re-tick.
+#[tauri::command]
+fn halt_watching(state: State<AppState>) -> Result<(), String> {
+    let current = read_settings(&state)?;
+    state.watcher.configure(false, current.double_copy_window_ms);
+    Ok(())
+}
+
+/// Opens the page where a fixed build is downloaded. A constant, like
+/// [`open_setup_docs`].
+#[tauri::command]
+fn open_releases_page() {
+    open_external(update::RELEASES_PAGE_URL);
+}
+
+/// Opens the advisory behind a block. Unlike every other URL the app opens this
+/// one arrived over the network, so it is refused unless it points into this
+/// repository and is spelled with characters no shell reads as syntax.
+#[tauri::command]
+fn open_advisory(url: String) -> Result<(), String> {
+    if !update::is_advisory_url(&url) {
+        return Err("このリンクは開けません".into());
+    }
+    open_external(&url);
+    Ok(())
 }
 
 /// Writes go through here rather than the JS plugin so the double-copy watcher
@@ -461,7 +529,12 @@ pub fn run() {
             grant_clipboard_consent,
             open_accessibility_settings,
             recheck_accessibility,
-            open_setup_docs
+            open_setup_docs,
+            app_version,
+            check_versions,
+            halt_watching,
+            open_releases_page,
+            open_advisory
         ])
         .run(tauri::generate_context!())
         .expect("error while running konjac");
