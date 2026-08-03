@@ -1,6 +1,6 @@
 # Konjac（コンニャク）
 
-**⌘C を 2 回**押すだけで開く、DeepL 風のミニ翻訳アプリ。macOS / Windows。Tauri 2 製。
+**⌘C を 2 回**押すだけで開く、ミニ翻訳アプリ。macOS / Windows。Tauri 2 製。
 
 ```
 [⌘C] [⌘C] → ウィンドウ表示 → コピーしたテキストを翻訳 → [Esc] で消える
@@ -9,7 +9,30 @@
 翻訳の中身は **手元の `claude` CLI（Claude Code）をワンショットで叩いて** 実現している。
 つまり Claude のサブスクを持っていれば、API キーなしでそのまま使える。
 
-**→ [最新版をダウンロード](../../releases/latest)**（macOS 13 以降 / Windows 10 以降）
+## デモ
+
+<!--
+  TODO: 画面収録に差し替える。
+  ・動画（.mp4/.mov）: GitHub の issue か PR のコメント欄にドラッグして得られる
+    https://github.com/user-attachments/assets/... の URL を、この下に素の URL として
+    1 行で貼るとプレイヤーとして再生される（リポジトリには入らない）
+  ・GIF にする場合: docs/media/demo.gif に置いて ![デモ](docs/media/demo.gif)
+-->
+
+（準備中）
+
+## ダウンロード
+
+**→ [最新版はこちら](../../releases/latest)**
+
+| OS | 落とすファイル | 動作確認 |
+|---|---|---|
+| **macOS 13（Ventura）以降** | **`Konjac_x.y.z_universal.dmg`**（Intel / Apple Silicon 共通） | ✅ 実機で確認しているのはこちら |
+| Windows 10 以降 | `Konjac_x.y.z_x64-setup.exe` | ⚠️ ビルドはしているが未検証 |
+
+開発と動作確認は macOS でやっている。Windows 版もビルドして配布しているが、
+実機で通した記録は無いので、まずは macOS の `.dmg` を勧める
+（→ [インストール](docs/install.md)）。
 
 > **必要なもの**: [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) が
 > インストール済みで、ログインまで通っていること。無ければ初回起動時に案内が出る。
@@ -20,8 +43,8 @@
 
 ## できること
 
-- **⌘C 2 回で起動して翻訳** — DeepL と同じ操作感（既定オフ）。アクセシビリティを
-  許可すれば **⌘ を押しっぱなしのまま C を 2 回**でも反応する
+- **⌘C 2 回で起動して翻訳** — コピーした文字がそのまま入力欄に入る（既定オフ）。
+  アクセシビリティを許可すれば **⌘ を押しっぱなしのまま C を 2 回**でも反応する
 - **トレイ（macOS はメニューバー）常駐** — ウィンドウを閉じても残る。開き直すのと終了はここから
 - 言語 16 種＋入れ替え、文体 4 種、モデル切り替え（`opus` / `sonnet` / `haiku` / `fable`）
 - **ストリーミング表示**・結果のその場編集・自動コピー

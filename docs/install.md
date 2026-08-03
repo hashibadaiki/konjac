@@ -2,10 +2,14 @@
 
 ## 対応 OS
 
-| OS | 下限 | 何がそれを決めているか |
-|---|---|---|
-| macOS | **13（Ventura）** | 画面が `color-mix()` に依存している。これを解釈できる WebKit は Safari 16.2 が最初で、載っているのは macOS 13 以降 |
-| Windows | **10** | WebView2 が要る。Windows 11 には最初から入っている |
+| OS | 下限 | 動作確認 | 何がそれを決めているか |
+|---|---|---|---|
+| macOS | **13（Ventura）** | ✅ 実機（開発機） | 画面が `color-mix()` に依存している。これを解釈できる WebKit は Safari 16.2 が最初で、載っているのは macOS 13 以降 |
+| Windows | **10** | ⚠️ 未検証 | WebView2 が要る。Windows 11 には最初から入っている |
+
+**開発と動作確認は macOS でやっている。** Windows 版もタグを打つたびにビルドして配布して
+いるが、実機で起動を通した記録は無い。⌘C 2 回の検出（`GetClipboardSequenceNumber()`）も
+コード上は入っているだけで、実機で確かめてはいない。
 
 macOS の下限は `.app` の `LSMinimumSystemVersion` に入る（`tauri.conf.json` の
 `minimumSystemVersion`）ので、これより古い macOS では Finder が起動を止める。
@@ -36,8 +40,8 @@ claude          # 起動して、サブスクのアカウントでログイン
 
 | OS | ファイル |
 |---|---|
-| macOS 13 以降（Intel / Apple Silicon 共通） | `Konjac_x.y.z_universal.dmg` |
-| Windows 10 以降 | `Konjac_x.y.z_x64-setup.exe` |
+| **macOS 13 以降（Intel / Apple Silicon 共通）** | **`Konjac_x.y.z_universal.dmg`** ← 動作確認しているのはこちら |
+| Windows 10 以降 | `Konjac_x.y.z_x64-setup.exe`（未検証） |
 
 Linux 版は出していない。⌘C 2 回の検出に使える API が無く、この
 アプリのほぼ全部がそれなので（[⌘C ⌘C をどう取っているか](how-it-works.md#c-c-をどう取っているか)）。
