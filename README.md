@@ -20,6 +20,7 @@
 
 **→ [最新版をダウンロード](../../releases/latest)**（macOS は `.dmg`、Windows は `.exe`）
 
+対応 OS は **macOS 13（Ventura）以降**と **Windows 10 以降**（[対応 OS](#対応-os)）。
 インストール後の初回起動には OS の警告を通す手順が要る（[インストール](#インストール)）。
 
 ## 何が入っているか
@@ -302,6 +303,24 @@ CLI の呼び出しは `translate.rs` の `run_cli_streaming` / `run_cli` に閉
 関数（断片ごとに `on_delta` を呼び、完成した訳文を返す）を書いて `translate()` で
 分岐させれば済む。プロンプト生成（`system_prompt`）はプロバイダに依存していない。
 
+## 対応 OS
+
+| OS | 下限 | 何がそれを決めているか |
+|---|---|---|
+| macOS | **13（Ventura）** | 画面が `color-mix()` に依存している。これを解釈できる WebKit は Safari 16.2 が最初で、載っているのは macOS 13 以降 |
+| Windows | **10** | WebView2 が要る。Windows 11 には最初から入っている |
+
+macOS の下限は `.app` の `LSMinimumSystemVersion` に入る（`tauri.conf.json` の
+`minimumSystemVersion`）ので、これより古い macOS では Finder が起動を止める。
+
+12 以前で外しているのは「試していない」ほうではなく「壊れて出る」ほう。`color-mix()`
+を知らない WebKit はその宣言ごと捨てるので、ボタン・枠・オーバーレイの背景が抜けた
+画面になる。中途半端に起動して崩れて見えるより、起動を止めたほうが分かりやすい。
+
+**ただしこの下限は CI で検証していない。** GitHub の macOS ランナーは新しい 2 世代
+（今は macOS 15 と 26）しか無く、13 や 14 で起動を確かめる手段が無い。上の数字は
+コードが要求している版から引いたもので、実機で通した記録ではない。
+
 ## インストール
 
 ### 1. Claude Code を入れる
@@ -322,8 +341,8 @@ claude          # 起動して、サブスクのアカウントでログイン
 
 | OS | ファイル |
 |---|---|
-| macOS（Intel / Apple Silicon 共通） | `Konjac_x.y.z_universal.dmg` |
-| Windows | `Konjac_x.y.z_x64-setup.exe` |
+| macOS 13 以降（Intel / Apple Silicon 共通） | `Konjac_x.y.z_universal.dmg` |
+| Windows 10 以降 | `Konjac_x.y.z_x64-setup.exe` |
 
 Linux 版は出していない。⌘C 2 回の検出に使える API が無く、この
 アプリのほぼ全部がそれなので（[⌘C ⌘C をどう取っているか](#c-c-をどう取っているか)）。
@@ -360,6 +379,7 @@ Linux 版は出していない。⌘C 2 回の検出に使える API が無く�
 ## ソースからビルド
 
 前提: Node.js 18+ / Rust 1.77+ / [Tauri の OS 別依存](https://tauri.app/start/prerequisites/)。
+ビルドする側の OS も [対応 OS](#対応-os) と同じ下限。
 `claude` にログイン済みであること（一度 `claude` を起動して認証を通す）。
 
 ```bash

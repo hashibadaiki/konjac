@@ -20,8 +20,14 @@ jobs:
   # for, it compiles the macOS-only keyboard monitor (`key_watch.rs`) that Linux
   # would skip entirely, and it needs none of the GTK/WebKit system packages a
   # Linux runner would have to install first.
+  #
+  # The image is pinned rather than `macos-latest`, so it has to be moved by
+  # hand when GitHub retires one — `macos-14` was already deprecated when this
+  # was last bumped. Only the newest two images exist at any time, which is also
+  # why nothing here can run on the oldest macOS the app claims to support
+  # (README: 対応 OS).
   check:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       # Actions are pinned to full commit SHAs rather than tags: a tag can be
       # moved to point at different code, and these steps run with the workflow
