@@ -49,6 +49,14 @@ pub struct Settings {
     pub clipboard_auto_translate: bool,
     pub auto_copy_result: bool,
     pub timeout_secs: u64,
+    /// Whether to ask GitHub for the newest release on launch and say so when
+    /// this build is behind it.
+    ///
+    /// Covers the notice only. The advisory that stops a build people must not
+    /// keep using is fetched either way — see [`crate::update`] — because a
+    /// switch that also turns that off would leave the installs most in need of
+    /// reaching as the ones that cannot be reached.
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -76,6 +84,13 @@ impl Default for Settings {
             // gives the slow start four times the room it has ever needed, and
             // still gives up on a stall in half a minute rather than two.
             timeout_secs: 30,
+            // On, unlike the clipboard gesture above. The two are not the same
+            // kind of ask: that one reads what the user copied and sends it to
+            // Anthropic, this one asks a public endpoint what the newest tag
+            // is and sends nothing of the user's at all. Defaulting it off
+            // would mostly mean nobody hears about the release that fixes the
+            // bug they are hitting.
+            check_for_updates: true,
         }
     }
 }
@@ -263,6 +278,26 @@ mod tests {
         .gated(true);
 
         assert!(!settings.double_copy_enabled);
+    }
+
+    /// A `settings.json` written before the field existed has to come back as
+    /// "yes, tell me about releases". That rests on the container's
+    /// `#[serde(default)]` filling missing fields from [`Settings::default`]
+    /// rather than from the field type — `bool`'s own default would switch the
+    /// notice off for every install that predates it.
+    #[test]
+    fn update_notices_survive_an_older_settings_file() {
+        let settings: Settings = serde_json::from_str(r#"{"model":"haiku"}"#).unwrap();
+        assert!(settings.check_for_updates);
+        assert!(Settings::default().check_for_updates);
+    }
+
+    /// And an explicit no stays no.
+    #[test]
+    fn update_notices_can_be_switched_off() {
+        let settings: Settings = serde_json::from_str(r#"{"check_for_updates":false}"#).unwrap();
+        assert!(!settings.check_for_updates);
+        assert!(!settings.normalized().check_for_updates);
     }
 
     /// And files written *before* the global shortcut was dropped must load

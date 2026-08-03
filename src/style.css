@@ -187,12 +187,41 @@ body {
   flex: 0 0 auto;
 }
 
+/*
+ * A button that does not look like one until you go near it: it is the way back
+ * to the translate pane, and a titlebar with a second obvious control in it
+ * would compete with the ⚙ − ✕ at the other end.
+ */
 .titlebar__name {
   display: flex;
   align-items: center;
   gap: 7px;
+  /* `font: inherit` first — it would otherwise wipe the weight set below. */
+  font: inherit;
   font-weight: 600;
   letter-spacing: 0.1em;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  margin-left: -6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.titlebar__name:hover {
+  background: var(--bg-elev);
+}
+
+/* The word squishes on press, not the cube — the cube has a wobble of its own,
+   and a second transform on top of it only muddies both. */
+.titlebar__name-label {
+  transition: transform 0.2s var(--squish);
+}
+
+.titlebar__name:active .titlebar__name-label {
+  transform: scale(1.06, 0.9);
 }
 
 /* A tiny cube of the stuff, breathing. */
@@ -800,13 +829,15 @@ input[type="checkbox"] {
   }
 
   .btn,
-  .icon-btn {
+  .icon-btn,
+  .titlebar__name-label {
     transition: none;
   }
 
   .btn:hover:not(:disabled),
   .btn:active:not(:disabled),
-  .icon-btn:active {
+  .icon-btn:active,
+  .titlebar__name:active .titlebar__name-label {
     transform: none;
   }
 }

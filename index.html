@@ -7,8 +7,16 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
+    <!--
+      The name is a button rather than a label, and so is the one part of the
+      titlebar that is not a drag region: it goes back to the translate pane,
+      the way a site's logo goes home. Dragging still works everywhere else
+      along the bar, including the spacer that takes up most of it.
+    -->
     <header class="titlebar" data-tauri-drag-region>
-      <span class="titlebar__name" data-tauri-drag-region>コンニャク</span>
+      <button class="titlebar__name" id="btn-home" title="翻訳画面に戻る">
+        <span class="titlebar__name-label">コンニャク</span>
+      </button>
       <span class="titlebar__badge" id="backend-badge">…</span>
       <div class="titlebar__spacer" data-tauri-drag-region></div>
       <button class="icon-btn" id="btn-settings" title="設定" aria-label="設定">⚙</button>
@@ -22,6 +30,18 @@
         サブスクではなく <strong>API キー側に課金</strong>します。サブスクで使うなら、
         この変数が無い環境からアプリを起動してください。
       </p>
+
+      <!--
+        A newer release exists. Says so and links to it; nothing is downloaded
+        or installed on the user's behalf — see `update.rs` for why not.
+      -->
+      <div class="note note--tip hidden" id="update-banner">
+        <p id="update-banner-text"></p>
+        <div class="actions">
+          <button class="btn" id="btn-update-get">入手する</button>
+          <button class="btn btn--tiny" id="btn-update-dismiss">あとで</button>
+        </div>
+      </div>
 
       <!--
         The same ask as `permission-prompt`, but out here where it will actually
@@ -121,6 +141,36 @@
       <p class="status status--block" id="setup-status"></p>
 
       <p class="note note--tip hidden" id="setup-detail"></p>
+    </section>
+
+    <!--
+      Stands in for everything else when a published advisory names a minimum
+      version above this build's. It is the app being withdrawn rather than
+      merely out of date, so it takes the pane instead of sitting in a banner
+      that can be waved off, and translation is refused for as long as it is up.
+      The heading and the steps hold whatever an advisory does not say: naming a
+      version is all `security.json` has to do, and the explanation and the link
+      below it are both optional.
+    -->
+    <section class="pane pane--setup hidden" id="pane-advisory">
+      <h2 class="setup__head">このバージョンは使わないでください</h2>
+
+      <p class="note note--warn" id="advisory-lead"></p>
+
+      <p class="note note--tip hidden" id="advisory-message"></p>
+
+      <ol class="setup__steps">
+        <li>下の「新しい版を入手」から最新のインストーラを落とす</li>
+        <li>いまのアプリを置き換える（設定はそのまま残る）</li>
+        <li>入れ替えたら、このアプリを起動し直す</li>
+      </ol>
+
+      <div class="actions">
+        <button class="btn btn--primary" id="btn-advisory-get">新しい版を入手</button>
+        <button class="btn hidden" id="btn-advisory-details">詳細を見る</button>
+      </div>
+
+      <p class="status status--block" id="advisory-status"></p>
     </section>
 
     <section class="pane pane--settings hidden" id="pane-settings">
@@ -276,6 +326,34 @@
         翻訳は届いた分から順に表示されるので、長文でも待ち時間は最初の 1 文字までで済む。
         この設定は「全体で何秒まで」ではなく「何も届かない状態が何秒続いたら諦めるか」。
       </p>
+
+      <h2 class="subhead">バージョン</h2>
+
+      <div class="diag">
+        <div class="diag__row">
+          <span class="diag__label">コンニャク</span>
+          <span class="diag__value" id="app-version">—</span>
+        </div>
+      </div>
+
+      <label class="field field--row">
+        <input id="set-update-check" type="checkbox" />
+        <span>新しいバージョンが出たら知らせる</span>
+      </label>
+
+      <p class="note note--tip">
+        1 日 1 回、GitHub に最新のタグを訊きに行くだけ。<strong>翻訳した文章も
+        クリップボードの中身も送らない</strong>し、更新を勝手に入れることもしない
+        （新しい版が出たことを伝えて、あとは自分で落としてもらう）。
+        オフにするとこの通知は出なくなるが、<strong>深刻な不具合が見つかったときの
+        告知だけは受け取る</strong> — 危ないと分かった版を使い続けている人にこそ
+        届く必要があるため。
+      </p>
+
+      <div class="actions">
+        <button class="btn" id="btn-check-update">いま確認する</button>
+        <span class="status" id="update-status"></span>
+      </div>
 
       <div class="actions">
         <button class="btn btn--primary" id="btn-save">保存</button>
