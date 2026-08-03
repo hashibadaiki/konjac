@@ -428,7 +428,17 @@ jobs:
             const { data } = await github.rest.repos.getRelease({ owner, repo, release_id })
             const body = data.body || ''
             const kept = body.includes(marker) ? body.slice(0, body.indexOf(marker)) : `${body}\n\n`
-            await github.rest.repos.updateRelease({ owner, repo, release_id, body: kept + section })
+
+            // `tag_name` is repeated on the way past because leaving it out of a
+            // PATCH does not leave it alone: a draft release quietly loses the
+            // tag it was created with and takes GitHub's `untagged-…`
+            // placeholder instead, which `publish` then turns into a real tag
+            // of that name. Every updateRelease call here has to carry it.
+            await github.rest.repos.updateRelease({
+              owner, repo, release_id,
+              tag_name: '${{ needs.draft.outputs.tag }}',
+              body: kept + section,
+            })
 
   # Only flips the release visible once both platforms have uploaded and the
   # macOS artifact has been verified, so nobody finds a release carrying just one
@@ -442,9 +452,13 @@ jobs:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
+            // `tag_name` for the reason spelled out in `verify`: a PATCH that
+            // omits it takes the tag away rather than leaving it be, and this
+            // is the call that would publish the result under the placeholder.
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: ${{ needs.draft.outputs.release_id }},
+              tag_name: '${{ needs.draft.outputs.tag }}',
               draft: false,
             })
