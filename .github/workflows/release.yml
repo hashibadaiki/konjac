@@ -131,8 +131,10 @@ jobs:
       matrix:
         include:
           # A single universal .dmg rather than one per architecture: it spares
-          # everyone downloading it the question of which Mac they have.
-          - platform: macos-14
+          # everyone downloading it the question of which Mac they have. The
+          # runner is an Apple Silicon one either way; the x86_64 half comes
+          # from the SDK, not from the machine.
+          - platform: macos-15
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target universal-apple-darwin
           - platform: windows-latest
@@ -188,7 +190,7 @@ jobs:
   # here to catch. Everything below runs against the mounted image.
   verify:
     needs: [draft, build]
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Download the release assets
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
