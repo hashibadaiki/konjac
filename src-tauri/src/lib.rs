@@ -127,6 +127,24 @@ fn grant_clipboard_consent(app: AppHandle) {
     settings::grant_consent(&app);
 }
 
+/// The marker recording that the first-launch question about the gesture has
+/// been put to the user. Separate from the consent marker because declining is
+/// an answer too, and a decline that left no trace would ask again every launch.
+const FIRST_RUN_ASKED: &str = "first-run-asked";
+
+/// Whether the first-launch question has already been answered. An install that
+/// predates this pane but has consented has been asked in the older way, so the
+/// frontend treats that as answered as well.
+#[tauri::command]
+fn first_run_answered(app: AppHandle) -> bool {
+    settings::marker_seen(&app, FIRST_RUN_ASKED)
+}
+
+#[tauri::command]
+fn mark_first_run_answered(app: AppHandle) {
+    settings::mark_seen(&app, FIRST_RUN_ASKED);
+}
+
 /// Opens the OS pane where the user grants keyboard-observation access.
 ///
 /// Asks first, because the pane on its own is not enough: an app appears in the
@@ -527,6 +545,8 @@ pub fn run() {
             clipboard_status,
             clipboard_consent,
             grant_clipboard_consent,
+            first_run_answered,
+            mark_first_run_answered,
             open_accessibility_settings,
             recheck_accessibility,
             open_setup_docs,
