@@ -173,10 +173,44 @@
       <p class="status status--block" id="advisory-status"></p>
     </section>
 
+    <!--
+      The first thing a fresh install sees. The gesture is the reason this app
+      exists and it ships off, so leaving the switch in the settings pane means
+      most people never meet it — and the ones who do meet it there meet it as a
+      checkbox with a wall of warning attached. Asked once, up front, as a
+      question with two buttons: it is the same disclosure the settings pane
+      makes, made at the moment it is actually a decision.
+    -->
+    <section class="pane pane--setup hidden" id="pane-welcome">
+      <h2 class="setup__head">コピー 2 回で開きますか？</h2>
+
+      <p class="note">
+        <strong><span id="welcome-gesture">⌘C</span> を 2 回</strong>押すと、この
+        ウィンドウが出てきて、コピーした文章をその場で翻訳する。この機能を
+        いま有効にするかどうかだけ決めてほしい。
+      </p>
+
+      <p class="note note--warn">
+        有効にすると、2 回目を検出したその瞬間に<strong>クリップボードの本文を読み</strong>、
+        <code>claude</code> CLI 経由で <strong>Anthropic に送って</strong>翻訳する。
+        それ以外のときは本文を見ない。パスワードなどをコピーした直後に誤検出が起きれば、
+        それも送られることになる。
+      </p>
+
+      <div class="actions">
+        <button class="btn btn--primary" id="btn-welcome-enable">有効にする</button>
+        <button class="btn" id="btn-welcome-skip">いまはしない</button>
+      </div>
+
+      <p class="status status--block" id="welcome-status">
+        どちらを選んでも、あとから設定画面で変えられる。
+      </p>
+    </section>
+
     <section class="pane pane--settings hidden" id="pane-settings">
       <p class="note">
         翻訳は手元の <code>claude</code> CLI をワンショットで呼び出す。Claude の
-        サブスクにログイン済みなら API キーは要らない。
+        サブスクにログイン済みなら API キーは要らない。<strong>変更はその場で保存される。</strong>
       </p>
 
       <label class="field">
@@ -342,12 +376,8 @@
       </label>
 
       <p class="note note--tip">
-        1 日 1 回、GitHub に最新のタグを訊きに行くだけ。<strong>翻訳した文章も
-        クリップボードの中身も送らない</strong>し、更新を勝手に入れることもしない
-        （新しい版が出たことを伝えて、あとは自分で落としてもらう）。
-        オフにするとこの通知は出なくなるが、<strong>深刻な不具合が見つかったときの
-        告知だけは受け取る</strong> — 危ないと分かった版を使い続けている人にこそ
-        届く必要があるため。
+        1 日 1 回 GitHub にタグを訊くだけで、<strong>文章もクリップボードの中身も送らない</strong>。
+        自動更新はしない。オフにしても、<strong>深刻な不具合の告知だけは届く</strong>。
       </p>
 
       <div class="actions">
@@ -356,7 +386,6 @@
       </div>
 
       <div class="actions">
-        <button class="btn btn--primary" id="btn-save">保存</button>
         <button class="btn" id="btn-check">接続確認</button>
         <span class="status" id="settings-status"></span>
       </div>

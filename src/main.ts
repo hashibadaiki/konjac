@@ -176,6 +176,12 @@ const el = {
   paneSettings: $<HTMLElement>("pane-settings"),
   paneSetup: $<HTMLElement>("pane-setup"),
   paneAdvisory: $<HTMLElement>("pane-advisory"),
+  paneWelcome: $<HTMLElement>("pane-welcome"),
+
+  welcomeGesture: $<HTMLSpanElement>("welcome-gesture"),
+  welcomeStatus: $<HTMLParagraphElement>("welcome-status"),
+  btnWelcomeEnable: $<HTMLButtonElement>("btn-welcome-enable"),
+  btnWelcomeSkip: $<HTMLButtonElement>("btn-welcome-skip"),
 
   apiKeyWarning: $<HTMLParagraphElement>("api-key-warning"),
 
@@ -257,7 +263,6 @@ const el = {
   setUpdateCheck: $<HTMLInputElement>("set-update-check"),
   btnCheckUpdate: $<HTMLButtonElement>("btn-check-update"),
   updateStatus: $<HTMLSpanElement>("update-status"),
-  btnSave: $<HTMLButtonElement>("btn-save"),
   btnCheck: $<HTMLButtonElement>("btn-check"),
   settingsStatus: $<HTMLSpanElement>("settings-status"),
 };
@@ -280,6 +285,13 @@ let clipboardConsent = false;
  * settings pane as the only place it is ever made again.
  */
 let permissionDismissed = false;
+/**
+ * Whether the first-launch question about the gesture is still unanswered. It
+ * outranks the translate pane while it is (see `homePane`), because it is the
+ * one thing this app cannot decide on the user's behalf and the one thing they
+ * would otherwise have to go looking for.
+ */
+let firstRunPending = false;
 
 /** This build's own version, asked for once at boot. */
 let appVersion = "";
@@ -428,18 +440,29 @@ function syncOverflow() {
 
 // ---------------------------------------------------------------- settings
 
+/**
+ * Writes a value back into a field, unless the user is in the middle of typing
+ * in it. Saving is what repaints this pane now, and saving happens while the
+ * caret is still in the box: a trimmed or clamped value going back in mid-word
+ * would move the caret and eat the rest of what was being typed.
+ */
+function setFieldValue(input: HTMLInputElement, value: string) {
+  if (document.activeElement === input) return;
+  input.value = value;
+}
+
 function applySettingsToUi() {
   el.sourceLang.value = settings.source_lang;
   el.targetLang.value = settings.target_lang;
   el.tone.value = settings.tone;
   selectWithFallback(el.model, settings.model);
 
-  el.setClaudeBin.value = settings.claude_bin;
+  setFieldValue(el.setClaudeBin, settings.claude_bin);
   el.setDoubleCopy.checked = settings.double_copy_enabled;
-  el.setDoubleCopyWindow.value = String(settings.double_copy_window_ms);
+  setFieldValue(el.setDoubleCopyWindow, String(settings.double_copy_window_ms));
   el.setClipboardAuto.checked = settings.clipboard_auto_translate;
   el.setAutoCopy.checked = settings.auto_copy_result;
-  el.setTimeout.value = String(settings.timeout_secs);
+  setFieldValue(el.setTimeout, String(settings.timeout_secs));
   el.setUpdateCheck.checked = settings.check_for_updates;
 
   syncTriggerFields();
@@ -598,6 +621,45 @@ async function persist(next: Settings): Promise<void> {
   applySettingsToUi();
 }
 
+/**
+ * Commits the settings pane as it stands.
+ *
+ * There is no save button: every control here writes through as it is touched,
+ * the way the language and model dropdowns on the translate pane always have.
+ * A pane whose switches only pretend to be switches until a button is pressed
+ * is the surprising one — particularly for the gesture, where an unsaved tick
+ * looks exactly like a feature that has been turned on and is not working.
+ */
+async function commitSettings() {
+  const previousBin = settings.claude_bin;
+  try {
+    await persist(readSettingsFromUi());
+    setStatus(el.settingsStatus, "保存しました", "ok");
+  } catch (err) {
+    setStatus(el.settingsStatus, String(err), "error");
+    return;
+  }
+  // A new path is the usual fix for a CLI that was not found, so the block is
+  // re-evaluated against it — but only when it is the path that moved, since
+  // probing spawns a process and every other field here saves without one.
+  if (settings.claude_bin !== previousBin) await revalidate();
+}
+
+let saveTimer: number | undefined;
+
+/**
+ * `delay` is what separates a checkbox from a text field: a tick is a finished
+ * decision, whereas a half-typed path would otherwise be saved a character at a
+ * time (and probed for, at that).
+ */
+function scheduleSave(delay = 0) {
+  window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => void commitSettings(), delay);
+}
+
+/** How long a field has to sit still before a keystroke counts as a decision. */
+const TYPING_SETTLE_MS = 600;
+
 /** Persist a translate-pane choice without touching the settings pane. */
 async function persistChoice() {
   await persist({
@@ -664,13 +726,14 @@ async function translate(text: string) {
 
 // ---------------------------------------------------------------- panes
 
-type Pane = "translate" | "settings" | "setup" | "advisory";
+type Pane = "translate" | "settings" | "setup" | "advisory" | "welcome";
 
 function showPane(pane: Pane) {
   el.paneTranslate.classList.toggle("hidden", pane !== "translate");
   el.paneSettings.classList.toggle("hidden", pane !== "settings");
   el.paneSetup.classList.toggle("hidden", pane !== "setup");
   el.paneAdvisory.classList.toggle("hidden", pane !== "advisory");
+  el.paneWelcome.classList.toggle("hidden", pane !== "welcome");
   // The counters are only worth polling while something reads them.
   setDiagnosticsPolling(pane);
   if (pane === "settings") {
@@ -687,9 +750,31 @@ function showPane(pane: Pane) {
  * Where dismissing a pane lands. With no usable CLI the translate pane has
  * nothing to offer, so setup takes its place as the app's resting state — and a
  * withdrawn build has less to offer still, so the advisory outranks even that.
+ *
+ * The first-launch question sits above both of those but below the advisory: it
+ * is asked before the app has been used at all, and answering it is two clicks,
+ * whereas installing Claude Code is a trip to a terminal that the answer does
+ * not depend on.
  */
 const homePane = (): Pane =>
-  advisory ? "advisory" : blocked ? "setup" : "translate";
+  advisory
+    ? "advisory"
+    : firstRunPending
+      ? "welcome"
+      : blocked
+        ? "setup"
+        : "translate";
+
+/**
+ * Records that the first-launch question has been put to the user, whichever
+ * way they answered it — including by way of the settings pane's own consent
+ * prompt, which is the same question asked somewhere else.
+ */
+async function answerFirstRun() {
+  if (!firstRunPending) return;
+  firstRunPending = false;
+  await invoke("mark_first_run_answered").catch(() => {});
+}
 
 // ------------------------------------------------------------------ cli state
 
@@ -815,7 +900,8 @@ async function runUpdateCheck(manual = false) {
   // The advisory is asked for on every launch and whatever the setting says.
   const published = await fetchAdvisory();
   const wantsNotice = manual || settings.check_for_updates;
-  const newest = wantsNotice ? await fetchLatestTag(manual) : null;
+  const release = wantsNotice ? await fetchLatestTag(manual) : null;
+  const newest = release?.tag ?? null;
 
   let verdict: Verdict;
   try {
@@ -853,10 +939,19 @@ async function runUpdateCheck(manual = false) {
     setStatus(el.updateStatus, "このバージョンは使えません", "error");
   } else if (verdict.outdated) {
     setStatus(el.updateStatus, `${newest} が出ています`, "ok");
-  } else if (newest) {
+  } else if (release?.reached && newest) {
     setStatus(el.updateStatus, `最新です（${appVersion}）`, "ok");
+  } else if (release?.reached) {
+    // GitHub answered and had nothing to report: no release is published yet
+    // (drafts and pre-releases do not count as one). Nothing is wrong, so this
+    // must not read as a failure — which is what it did before.
+    setStatus(
+      el.updateStatus,
+      `公開された版はまだありません（${appVersion}）`,
+      "ok",
+    );
   } else {
-    setStatus(el.updateStatus, "確認できませんでした", "error");
+    setStatus(el.updateStatus, "GitHub に接続できませんでした", "error");
   }
 }
 
@@ -930,22 +1025,20 @@ el.setDoubleCopy.addEventListener("change", () => {
   el.consentPrompt.classList.add("hidden");
   syncTriggerFields();
   if (el.setDoubleCopy.checked) void refreshDiagnostics();
+  scheduleSave();
 });
 
 el.btnConsentAgree.addEventListener("click", async () => {
   await invoke("grant_clipboard_consent");
   clipboardConsent = true;
+  // Agreeing is only reached by ticking the box, so it is that tick being
+  // answered — the gesture goes on now rather than waiting for a second act.
+  await answerFirstRun();
   el.consentPrompt.classList.add("hidden");
   el.setDoubleCopy.checked = true;
   syncTriggerFields();
   void refreshDiagnostics();
-  // Deliberately not saved here. Consent lifts the gate; the box below is still
-  // the switch, and "保存" is still what commits it — the same as every other
-  // field in this pane.
-  setStatus(
-    el.settingsStatus,
-    "同意を記録しました。「保存」を押すと有効になります。",
-  );
+  await commitSettings();
 });
 
 el.btnConsentDecline.addEventListener("click", () => {
@@ -953,6 +1046,19 @@ el.btnConsentDecline.addEventListener("click", () => {
   el.setDoubleCopy.checked = false;
   syncTriggerFields();
 });
+
+// Everything else in the pane. Checkboxes commit on the spot; the two typed
+// fields wait for the typing to stop, and again when the field is left, so
+// tabbing away or pressing Enter does not sit on an unsaved keystroke.
+for (const box of [el.setClipboardAuto, el.setAutoCopy, el.setUpdateCheck]) {
+  box.addEventListener("change", () => scheduleSave());
+}
+
+for (const field of [el.setClaudeBin, el.setDoubleCopyWindow, el.setTimeout]) {
+  field.addEventListener("input", () => scheduleSave(TYPING_SETTLE_MS));
+  field.addEventListener("change", () => scheduleSave());
+  field.addEventListener("blur", () => scheduleSave());
+}
 
 el.btnSettings.addEventListener("click", () =>
   showPane(el.paneSettings.classList.contains("hidden") ? "settings" : homePane()),
@@ -990,8 +1096,32 @@ el.btnSetupRecheck.addEventListener("click", async () => {
     setStatus(el.setupStatus, "まだ見つかりません。", "error");
   } else {
     setStatus(el.setupStatus, "");
-    showPane("translate");
+    showPane(homePane());
   }
+});
+
+// The one place the gesture can be turned on without the settings pane. It does
+// the whole of it — consent, the flag, and the save — because a first-launch
+// question that answers "yes" by sending you somewhere else to finish is not an
+// answer.
+el.btnWelcomeEnable.addEventListener("click", async () => {
+  el.btnWelcomeEnable.disabled = true;
+  try {
+    await invoke("grant_clipboard_consent");
+    clipboardConsent = true;
+    await persist({ ...settings, double_copy_enabled: true });
+  } catch (err) {
+    setStatus(el.welcomeStatus, String(err), "error");
+    el.btnWelcomeEnable.disabled = false;
+    return;
+  }
+  await answerFirstRun();
+  showPane(homePane());
+});
+
+el.btnWelcomeSkip.addEventListener("click", async () => {
+  await answerFirstRun();
+  showPane(homePane());
 });
 
 el.btnSetupDocs.addEventListener("click", () => invoke("open_setup_docs"));
@@ -1007,18 +1137,6 @@ el.btnSetupCopy.addEventListener("click", async () => {
 el.btnMinimize.addEventListener("click", () => appWindow.minimize());
 el.btnClose.addEventListener("click", () => appWindow.hide());
 el.btnCheck.addEventListener("click", checkCli);
-
-el.btnSave.addEventListener("click", async () => {
-  try {
-    await persist(readSettingsFromUi());
-    setStatus(el.settingsStatus, "保存しました", "ok");
-    // A newly saved path is the usual fix for a CLI that was not found, so the
-    // block is re-evaluated against it rather than left stale.
-    await revalidate();
-  } catch (err) {
-    setStatus(el.settingsStatus, String(err), "error");
-  }
-});
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
@@ -1104,8 +1222,17 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   clipboardConsent = await invoke<boolean>("clipboard_consent");
   appVersion = await invoke<string>("app_version");
   el.appVersion.textContent = appVersion;
+  el.welcomeGesture.textContent = COPY_KEY;
   settings = await invoke<Settings>("get_settings");
   applySettingsToUi();
+
+  // Asked on the first launch only, and only where there is something to
+  // answer: a platform with no detector has no gesture to offer, and a user who
+  // has already been through the disclosure has already been asked.
+  firstRunPending =
+    doubleCopySupported &&
+    !clipboardConsent &&
+    !(await invoke<boolean>("first_run_answered").catch(() => true));
 
   // Two CLI probes have to come back before this resolves, so the window is
   // already up and the badge reads "…" while it happens.

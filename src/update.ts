@@ -47,6 +47,16 @@ export interface Advisory {
 }
 
 /**
+ * A response that arrived and said no. Carries the code because one of them —
+ * 404 from the releases endpoint — is an answer rather than a failure.
+ */
+class HttpError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+  }
+}
+
+/**
  * `AbortSignal.timeout` would do this in one line, but the app supports macOS
  * back to 10.15 and the WebKit that ships there does not have it.
  */
@@ -61,7 +71,7 @@ async function getJson(url: string): Promise<unknown> {
       // entry from before the advisory was published.
       cache: "no-store",
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) throw new HttpError(response.status);
     return await response.json();
   } finally {
     window.clearTimeout(timer);
@@ -123,26 +133,46 @@ function writeCache(entry: CachedRelease) {
   }
 }
 
+/** What looking at the releases endpoint came back with. */
+export interface LatestRelease {
+  /**
+   * Whether GitHub answered at all. False means offline, rate limited, or down
+   * — which is why "no newer version" and "could not check" must not read the
+   * same on screen.
+   */
+  reached: boolean;
+  /** The newest published tag, or null when there is not one yet. */
+  tag: string | null;
+}
+
 /**
- * The newest published tag, or null if it could not be had.
+ * The newest published tag, and whether the question got through.
  *
  * Answers from the last day's cache unless `force` says otherwise, so pressing
  * the button in the settings pane always reaches the network while launching
  * the app four times in an afternoon asks once.
  */
-export async function fetchLatestTag(force: boolean): Promise<string | null> {
+export async function fetchLatestTag(force: boolean): Promise<LatestRelease> {
   const cached = readCache();
   if (!force && cached && Date.now() - cached.at < NOTICE_INTERVAL_MS) {
-    return cached.tag;
+    return { reached: true, tag: cached.tag };
   }
 
   let raw: unknown;
   try {
     raw = await getJson(LATEST_RELEASE_URL);
-  } catch {
+  } catch (err) {
+    // A 404 here is an answer, not a failure: the endpoint skips drafts and
+    // pre-releases, so a repository whose only release is still a draft has
+    // nothing to report. That is worth caching like any other answer, and worth
+    // saying differently to the user than "could not reach GitHub".
+    if (err instanceof HttpError && err.status === 404) {
+      writeCache({ at: Date.now(), tag: null });
+      return { reached: true, tag: null };
+    }
     // Keep whatever the last successful check found: a newer version does not
     // stop existing because this one call failed.
-    return cached?.tag ?? null;
+    return { reached: false, tag: cached?.tag ?? null };
   }
 
   const tag =
@@ -150,7 +180,7 @@ export async function fetchLatestTag(force: boolean): Promise<string | null> {
       ? text((raw as Record<string, unknown>).tag_name)
       : null;
   writeCache({ at: Date.now(), tag });
-  return tag;
+  return { reached: true, tag };
 }
 
 /**
