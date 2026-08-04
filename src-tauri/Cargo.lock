@@ -1717,7 +1717,7 @@ dependencies = [
 
 [[package]]
 name = "konjac"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "block2",
  "objc2-app-kit",
