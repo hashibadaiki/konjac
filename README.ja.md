@@ -2,7 +2,8 @@
 
 [English](README.md) | 日本語
 
-**⌘C を 2 回**押すだけで開く、ミニ翻訳アプリ。macOS / Windows。Tauri 2 製。
+**⌘C を 2 回**押すだけで開く、ミニ翻訳アプリ。macOS 用。Tauri 2 製。
+Windows 版も配布しているが、いまは[動かない見込み](#ダウンロード)。
 
 ```
 [⌘C] [⌘C] → ウィンドウ表示 → コピーしたテキストを翻訳 → [Esc] で消える
@@ -22,11 +23,20 @@ https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 | OS | 落とすファイル | 動作確認 |
 |---|---|---|
 | **macOS 13（Ventura）以降** | **`Konjac_x.y.z_universal.dmg`**（Intel / Apple Silicon 共通） | ✅ 実機で確認しているのはこちら |
-| Windows 10 以降 | `Konjac_x.y.z_x64-setup.exe` | ⚠️ ビルドはしているが未検証 |
+| Windows 10 以降 | `Konjac_x.y.z_x64-setup.exe` | ❌ **未検証。おそらく動かない** |
 
-開発と動作確認は macOS でやっている。Windows 版もビルドして配布しているが、
-実機で通した記録は無いので、まずは macOS の `.dmg` を勧める
-（→ [インストール](docs/install.md)）。
+**開発と動作確認は macOS でやっている。** Windows 版はタグを打つたびにビルドして配布して
+いるが、実機で一度も起動していない。
+
+そのうえでコードを読み直したところ、**いまの Windows 版はまともに動かない公算が高い**。
+
+- 下の[インストール](docs/install.md)が案内している npm 版の Claude Code を使っていると、
+  翻訳の実行時に必ず失敗する（[#27](../../issues/27)）
+- ⌘C 2 回の検出そのものが Windows では一度も発火しない疑いがある（[#28](../../issues/28)）
+- そもそも Windows にはキーボード監視が無いので、⌘C 2 回で反応しても**既定では入力欄に
+  入るところまで**で、翻訳は `Ctrl+Enter` で実行することになる
+
+直るまでは macOS の `.dmg` を使ってほしい。
 
 > **必要なもの**: [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) が
 > インストール済みで、ログインまで通っていること。無ければ初回起動時に案内が出る。
