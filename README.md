@@ -2,7 +2,8 @@
 
 English | [日本語](README.ja.md)
 
-A tiny translation app that opens on a **double ⌘C**. macOS / Windows. Built with Tauri 2.
+A tiny translation app that opens on a **double ⌘C**. For macOS. Built with Tauri 2.
+Windows builds are published too, but they are [not expected to work yet](#download).
 
 ```
 [⌘C] [⌘C] → window appears → the copied text is translated → [Esc] to dismiss
@@ -23,11 +24,21 @@ https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 | OS | File to grab | Tested |
 |---|---|---|
 | **macOS 13 (Ventura) or later** | **`Konjac_x.y.z_universal.dmg`** (Intel / Apple Silicon) | ✅ this is the one that gets tested |
-| Windows 10 or later | `Konjac_x.y.z_x64-setup.exe` | ⚠️ built and shipped, but never run on real hardware |
+| Windows 10 or later | `Konjac_x.y.z_x64-setup.exe` | ❌ **untested, and most likely broken** |
 
-Development and testing happen on macOS. Windows installers are built and published on
-every tag, but there is no record of one being launched on an actual machine, so start
-with the macOS `.dmg` (→ [Install](docs/install.md), in Japanese).
+**Development and testing happen on macOS.** Windows installers are built and published
+on every tag, but not one has ever been launched on an actual machine.
+
+Re-reading the code with Windows in mind, **the current Windows build is unlikely to work
+at all**.
+
+- With the npm build of Claude Code — the one [Install](docs/install.md) tells you to get
+  — every translation fails at launch ([#27](../../issues/27))
+- The double-⌘C detection itself may never fire on Windows ([#28](../../issues/28))
+- There is no keyboard monitoring on Windows, so even when it does fire, by default the
+  text only lands in the input box; you translate with `Ctrl+Enter`
+
+Until that is fixed, use the macOS `.dmg`.
 
 > **Requirements**: [Claude Code](https://docs.claude.com/en/docs/claude-code/setup)
 > installed and logged in. If it is missing, the app says so on first launch.
