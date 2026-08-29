@@ -24,8 +24,12 @@ pub const CLIPBOARD_CONSENT: &str = "clipboard-consent";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Try Google Cloud Translation NMT first for short, plain, default-tone
+    /// text. A missing key simply leaves Claude as the only route.
+    pub google_translate_enabled: bool,
     /// Path to (or bare name of) the `claude` executable. Translation runs
-    /// through the CLI so it authenticates with the user's Claude subscription.
+    /// through the CLI as the fallback, authenticating with the user's Claude
+    /// subscription.
     pub claude_bin: String,
     /// A CLI model alias (`opus`, `sonnet`, `haiku`, `fable`) or a full model
     /// id such as `claude-opus-4-8`.
@@ -44,8 +48,9 @@ pub struct Settings {
     /// Off by default because that detector cannot tell a copy from any other
     /// app's clipboard write (see [`crate::clipboard_watch`]): a dictation tool
     /// putting text back would otherwise send whatever was on the clipboard to
-    /// Anthropic with no press of the button. The keyboard detector reads ⌘C
-    /// itself and has no such blind spot, so it is not subject to this.
+    /// an external translation service with no press of the button. The keyboard
+    /// detector reads ⌘C itself and has no such blind spot, so it is not subject
+    /// to this.
     pub clipboard_auto_translate: bool,
     pub auto_copy_result: bool,
     pub timeout_secs: u64,
@@ -62,6 +67,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            google_translate_enabled: true,
             claude_bin: "claude".into(),
             model: DEFAULT_MODEL.into(),
             source_lang: "auto".into(),
@@ -70,7 +76,7 @@ impl Default for Settings {
             // Off on a fresh install, on purpose. Watching for the gesture is
             // what makes the app read the clipboard at all, and a detector that
             // fires by mistake sends whatever is on it — a password, a token, an
-            // internal document — to Anthropic. That is not a thing to opt a
+            // internal document — to an external service. That is not a thing to opt a
             // user into on their behalf; enabling it is their call, made once
             // they have been told what it does (`gated`).
             double_copy_enabled: false,
@@ -302,6 +308,7 @@ mod tests {
         assert_eq!(settings.model, "haiku");
         assert_eq!(settings.target_lang, "Japanese");
         assert_eq!(settings.timeout_secs, 30);
+        assert!(settings.google_translate_enabled);
     }
 
     /// Nothing watches the clipboard on a machine where the app has only ever

@@ -22,7 +22,22 @@ macOS の下限は `.app` の `LSMinimumSystemVersion` に入る（`tauri.conf.j
 （今は macOS 15 と 26）しか無く、13 や 14 で起動を確かめる手段が無い。上の数字は
 コードが要求している版から引いたもので、実機で通した記録ではない。
 
-## 1. Claude Code を入れる
+## 1. 翻訳先を用意する
+
+短い通常文だけなら Google NMT 単独でも動く。全機能を使うには Claude Code を用意する。両方を
+設定すると、Google を短文の高速経路、Claude Code を文体指定・コードを含む文書・Google 失敗時の
+フォールバックとして使う。
+
+### Google NMT を使う
+
+1. 課金を有効にした Google Cloud プロジェクトで **Cloud Translation API** を有効にする
+2. API キーを作り、API の制限を **Cloud Translation API** のみにする
+3. コンニャクの設定画面で「Google Cloud Translation API キー」へ入れて保存する
+
+キーは `settings.json` ではなく macOS Keychain / Windows 資格情報マネージャーに保存される。
+設定手順は [Google Cloud Translation の認証](https://cloud.google.com/translate/docs/authentication) を参照。
+
+### Claude Code を使う
 
 まだ無ければ、インストールしてログインまで通しておく。
 
@@ -31,7 +46,7 @@ npm install -g @anthropic-ai/claude-code
 claude          # 起動して、サブスクのアカウントでログイン
 ```
 
-このアプリはここで通した認証をそのまま使う。API キーは要らない
+この経路はここで通した認証をそのまま使う。Anthropic API キーは要らない
 （詳しくは [Claude Code のセットアップ](https://docs.claude.com/en/docs/claude-code/setup)）。
 
 ## 2. コンニャクを入れる

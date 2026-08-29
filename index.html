@@ -135,7 +135,7 @@
       and "too old" need different instructions.
     -->
     <section class="pane pane--setup hidden" id="pane-setup">
-      <h2 class="setup__head" id="setup-head">Claude Code が必要です</h2>
+      <h2 class="setup__head" id="setup-head">翻訳の接続設定が必要です</h2>
       <p class="note" id="setup-lead"></p>
 
       <ol class="setup__steps" id="setup-steps">
@@ -156,7 +156,7 @@
       <div class="actions">
         <button class="btn btn--primary" id="btn-setup-recheck">再検出</button>
         <button class="btn" id="btn-setup-docs">手順を開く</button>
-        <button class="btn" id="btn-setup-settings">パスを指定</button>
+        <button class="btn" id="btn-setup-settings">接続を設定</button>
       </div>
 
       <p class="status status--block" id="setup-status"></p>
@@ -213,7 +213,7 @@
 
       <p class="note note--warn">
         有効にすると、2 回目を検出したその瞬間に<strong>クリップボードの本文を読み</strong>、
-        <code>claude</code> CLI 経由で <strong>Anthropic に送って</strong>翻訳する。
+        選択中の翻訳経路（Google Cloud Translation または Claude Code）へ送って翻訳する。
         それ以外のときは本文を見ない。パスワードなどをコピーした直後に誤検出が起きれば、
         それも送られることになる。
       </p>
@@ -230,9 +230,42 @@
 
     <section class="pane pane--settings hidden" id="pane-settings">
       <p class="note">
-        翻訳は手元の <code>claude</code> CLI をワンショットで呼び出す。Claude の
-        サブスクにログイン済みなら API キーは要らない。<strong>変更はその場で保存される。</strong>
+        短い通常文は Google NMT で素早く翻訳し、文体指定・コードを含む文書・Google の失敗時は
+        手元の <code>claude</code> CLI に切り替える。<strong>変更はその場で保存される。</strong>
       </p>
+
+      <h2 class="subhead">Google NMT（高速経路）</h2>
+
+      <label class="field field--row">
+        <input id="set-google-enabled" type="checkbox" />
+        <span>短い通常文は Google Cloud Translation NMT を先に使う</span>
+      </label>
+
+      <label class="field">
+        <span>Google Cloud Translation API キー</span>
+        <input
+          id="google-api-key"
+          type="password"
+          placeholder="AIza…"
+          autocomplete="new-password"
+          spellcheck="false"
+        />
+      </label>
+
+      <div class="actions">
+        <button class="btn" id="btn-google-save">API キーを保存</button>
+        <button class="btn btn--tiny" id="btn-google-delete">削除</button>
+        <span class="status" id="google-key-status">確認中…</span>
+      </div>
+
+      <p class="note note--tip">
+        キーは <code>settings.json</code> ではなく macOS Keychain / Windows 資格情報マネージャーに保存する。
+        通常文（標準の文体・5,000字以内）だけが対象。文体指定、コード・URL付き、Google が5秒以内に
+        応答しない場合は Claude Code に切り替える。Google Cloud 側の利用料金は別に発生しうる。
+        API キーには Cloud Translation API だけの制限を付けること。
+      </p>
+
+      <h2 class="subhead">Claude Code（フォールバック）</h2>
 
       <label class="field">
         <span>claude 実行ファイル</span>
@@ -256,11 +289,12 @@
       -->
       <div class="note note--warn hidden" id="consent-prompt">
         <p>
-          <strong>有効にすると、コピーした内容が Anthropic に送信されます。</strong>
+          <strong>有効にすると、コピーした内容が外部の翻訳サービスへ送信されます。</strong>
         </p>
         <p>
-          コピー 2 回を検出した瞬間に<strong>クリップボードの本文を読み取り</strong>、手元の
-          <code>claude</code> CLI（Claude Code）経由で <strong>Anthropic のサーバへ送って</strong>翻訳する。
+          コピー 2 回を検出した瞬間に<strong>クリップボードの本文を読み取り</strong>、
+          Google NMT が設定済みなら <strong>Google Cloud Translation</strong>へ、対象外または失敗時は
+          <code>claude</code> CLI 経由で <strong>Anthropic</strong>へ送って翻訳する。
           パスワード・アクセストークン・社内文書などがクリップボードに入っている状態で
           誤検出が起きれば、それらが送られることになる。
         </p>
@@ -268,7 +302,7 @@
           読み取るのは 2 回目を検出したその瞬間だけで、それ以外のときは本文を見ない
           （常時見ているのは OS の「変更カウンタ」という数値だけ）。無効のあいだは
           読み取りも送信も起きない。訳文も原文もこのアプリはディスクに保存しない。
-          送信後の扱いは Claude Code のアカウント設定と Anthropic のプライバシーポリシーに従う。
+          送信後の扱いは Google Cloud または Claude Code のアカウント設定と各サービスのポリシーに従う。
         </p>
         <div class="actions">
           <button class="btn btn--primary" id="btn-consent-agree">同意して有効にする</button>
@@ -280,7 +314,8 @@
            send and when" is answerable after the one-time dialog is gone. -->
       <p class="note note--warn hidden" id="double-copy-privacy">
         <strong>送信先:</strong> 2 回目を検出した瞬間にクリップボードの本文を読み、
-        <code>claude</code> CLI（Claude Code）経由で Anthropic に送って翻訳する。
+        Google NMT が設定済みなら Google Cloud Translation へ、対象外・失敗時は
+        <code>claude</code> CLI 経由で Anthropic に送って翻訳する。
         チェックを外せば、読み取りも送信も止まる。
       </p>
 

@@ -17,9 +17,22 @@
 ⌘C 2 回は既定ではオフで、そのあいだはトレイからだけ開く常駐アプリとして動く。
 一度有効にしたあと、また設定画面でオフに戻すこともできる。
 
-## モデルの選び方
+## 高速経路の使い方
 
-モデルはメイン画面の文体の隣で切り替える。エイリアス（`opus` / `sonnet` / `haiku` / `fable`、
+設定画面で Google Cloud Translation API キーを保存すると、標準の文体・5,000字以内でコードや
+URLを含まない文章は Google NMT を先に使う。応答が5秒を超えた場合やAPIエラー時は、自動で
+Claude Codeへ切り替わる。結果の横には `Google NMT`、`sonnet（Google から切替）` のように
+実際の経路が表示される。
+
+文体を「敬体・ビジネス」「口語・カジュアル」「技術文書」にした場合は、文体指定を扱えない
+NMTを通さず最初からClaude Codeを使う。バッククォート、コードフェンス、URL付きも同様。
+
+APIキーは `settings.json` には入らず、macOS Keychain / Windows資格情報マネージャーに保存される。
+Google Cloud側でもキーのAPI制限を Cloud Translation API のみに絞っておく。
+
+## Claude モデルの選び方
+
+Claude Codeへ送られたときのモデルは、メイン画面の文体の隣で切り替える。エイリアス（`opus` / `sonnet` / `haiku` / `fable`、
 常に最新を指す）とバージョン固定の ID が並んでいる。選択内容は言語・文体と一緒に即座に保存される。
 
 **既定は `sonnet`**（初回起動時のみ。既存の `settings.json` はそのまま）。翻訳は決まった

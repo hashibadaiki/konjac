@@ -64,6 +64,7 @@ konjac/
 └── src-tauri/
     └── src/
         ├── lib.rs               Tauri コマンド、トレイ、状態管理
+        ├── google_translate.rs  Google NMT、言語コード、API キーの資格情報ストア
         ├── settings.rs          設定の型・既定値・永続化、クリップボード読み取りの同意ゲート
         ├── translate.rs         プロンプト生成、claude CLI 呼び出し（ストリーミング）、claude の探索と能力確認
         ├── update.rs            バージョン比較、停止の判定、告知 URL の検証
@@ -72,4 +73,4 @@ konjac/
 ```
 
 コードの内部については [仕組み](how-it-works.md)、特に
-[他のプロバイダを足すとき](how-it-works.md#他のプロバイダを足すとき)。
+[翻訳経路を足すとき](how-it-works.md#翻訳経路を足すとき)。

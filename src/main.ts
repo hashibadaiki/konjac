@@ -13,6 +13,7 @@ import {
 // ---------------------------------------------------------------- types
 
 interface Settings {
+  google_translate_enabled: boolean;
   claude_bin: string;
   model: string;
   source_lang: string;
@@ -37,8 +38,16 @@ interface Verdict {
 
 interface TranslateResult {
   text: string;
+  provider: "google" | "claude";
   model: string;
   elapsed_ms: number;
+  fallback_reason: string | null;
+}
+
+interface GoogleApiKeyStatus {
+  configured: boolean;
+  source: "environment" | "keychain" | "none";
+  canStore: boolean;
 }
 
 interface TriggerPayload {
@@ -238,6 +247,11 @@ const el = {
   btnTranslate: $<HTMLButtonElement>("btn-translate"),
   btnCopy: $<HTMLButtonElement>("btn-copy"),
 
+  setGoogleEnabled: $<HTMLInputElement>("set-google-enabled"),
+  googleApiKey: $<HTMLInputElement>("google-api-key"),
+  btnGoogleSave: $<HTMLButtonElement>("btn-google-save"),
+  btnGoogleDelete: $<HTMLButtonElement>("btn-google-delete"),
+  googleKeyStatus: $<HTMLSpanElement>("google-key-status"),
   setClaudeBin: $<HTMLInputElement>("set-claude-bin"),
   setDoubleCopy: $<HTMLInputElement>("set-double-copy"),
   consentPrompt: $<HTMLDivElement>("consent-prompt"),
@@ -276,6 +290,7 @@ const el = {
 // ---------------------------------------------------------------- state
 
 let settings: Settings;
+let googleKeyStatus: GoogleApiKeyStatus | null = null;
 let busy = false;
 let doubleCopySupported = false;
 /**
@@ -411,7 +426,9 @@ function setBusy(next: boolean) {
   elapsedTimer = undefined;
   if (!next) return;
 
-  el.loadingLabel.textContent = `${el.model.value} で翻訳しています…`;
+  el.loadingLabel.textContent = googleFastPathSelected()
+    ? "Google NMT で翻訳しています…"
+    : `${el.model.value} で翻訳しています…`;
   const started = performance.now();
   const tick = () => {
     const seconds = (performance.now() - started) / 1000;
@@ -464,6 +481,21 @@ function syncOverflow() {
   el.inputOverflowNote.textContent = ` — ${model} の上限を超えています。長すぎると訳文の先頭が欠けたまま返ることがあります。`;
 }
 
+/** Mirrors the Rust eligibility check so the loading label names the route. */
+function googleFastPathSelected() {
+  const text = el.input.value.trim();
+  return (
+    settings?.google_translate_enabled &&
+    googleKeyStatus?.configured &&
+    el.tone.value === "default" &&
+    Array.from(text).length <= 5_000 &&
+    !text.includes("`") &&
+    !text.includes("~~~") &&
+    !text.includes("http://") &&
+    !text.includes("https://")
+  );
+}
+
 // ---------------------------------------------------------------- settings
 
 /**
@@ -483,6 +515,7 @@ function applySettingsToUi() {
   el.tone.value = settings.tone;
   selectWithFallback(el.model, settings.model);
 
+  el.setGoogleEnabled.checked = settings.google_translate_enabled;
   setFieldValue(el.setClaudeBin, settings.claude_bin);
   el.setDoubleCopy.checked = settings.double_copy_enabled;
   setFieldValue(el.setDoubleCopyWindow, String(settings.double_copy_window_ms));
@@ -626,6 +659,7 @@ function setDiagnosticsPolling(pane: Pane) {
 
 function readSettingsFromUi(): Settings {
   return {
+    google_translate_enabled: el.setGoogleEnabled.checked,
     claude_bin: el.setClaudeBin.value.trim() || "claude",
     model: el.model.value || DEFAULT_MODEL,
     source_lang: el.sourceLang.value,
@@ -663,6 +697,7 @@ async function persist(next: Settings): Promise<void> {
  */
 async function commitSettings() {
   const previousBin = settings.claude_bin;
+  const previousGoogle = settings.google_translate_enabled;
   try {
     await persist(readSettingsFromUi());
     setStatus(el.settingsStatus, "保存しました", "ok");
@@ -673,7 +708,12 @@ async function commitSettings() {
   // A new path is the usual fix for a CLI that was not found, so the block is
   // re-evaluated against it — but only when it is the path that moved, since
   // probing spawns a process and every other field here saves without one.
-  if (settings.claude_bin !== previousBin) await revalidate();
+  if (
+    settings.claude_bin !== previousBin ||
+    settings.google_translate_enabled !== previousGoogle
+  ) {
+    await revalidate();
+  }
 }
 
 let saveTimer: number | undefined;
@@ -706,7 +746,7 @@ async function persistChoice() {
 
 async function translate(text: string) {
   const trimmed = text.trim();
-  // ⌘Enter is still live while the setup pane is up, and there is no CLI to ask.
+  // ⌘Enter is still live while the setup pane is up, and there is no route to ask.
   // A withdrawn build refuses here too: the pane is what says so, this is what
   // makes it true — including for the ⌘C ⌘C path, which never sees a pane.
   if (!trimmed || busy || blocked || advisory) return;
@@ -715,6 +755,7 @@ async function translate(text: string) {
   // The spinner carries the "working on it"; a stale result underneath it would
   // only muddy which text is which.
   setStatus(el.status, "");
+  el.status.title = "";
   // Whatever it was waiting to be asked, it has now been asked.
   setConfirmHint(false);
   el.output.classList.remove("is-error");
@@ -741,9 +782,14 @@ async function translate(text: string) {
     jiggle(el.output);
     setStatus(
       el.status,
-      `${result.model} · ${(result.elapsed_ms / 1000).toFixed(1)}s`,
+      `${result.provider === "google" ? "Google NMT" : result.model}${
+        result.fallback_reason ? "（Google から切替）" : ""
+      } · ${(result.elapsed_ms / 1000).toFixed(1)}s`,
       "ok",
     );
+    // The compact status line names the switch; the full reason remains
+    // available without crowding the translation pane.
+    el.status.title = result.fallback_reason ?? "";
     if (settings.auto_copy_result) {
       await writeClipboard(result.text);
     }
@@ -780,7 +826,7 @@ function showPane(pane: Pane) {
 }
 
 /**
- * Where dismissing a pane lands. With no usable CLI the translate pane has
+ * Where dismissing a pane lands. With no usable translation route the pane has
  * nothing to offer, so setup takes its place as the app's resting state — and a
  * withdrawn build has less to offer still, so the advisory outranks even that.
  *
@@ -811,7 +857,7 @@ async function answerFirstRun() {
 
 // ------------------------------------------------------------------ cli state
 
-/** Why translation is impossible right now, or null when it is fine. */
+/** Why the Claude route is impossible right now, or null when it is fine. */
 interface CliBlock {
   head: string;
   lead: string;
@@ -844,10 +890,10 @@ async function probeCli(candidate?: Settings): Promise<CliBlock | null> {
     el.apiKeyWarning.classList.add("hidden");
     el.loginWarning.classList.add("hidden");
     return {
-      head: "Claude Code が必要です",
+      head: "翻訳の接続設定が必要です",
       lead:
-        "翻訳は手元の claude CLI に投げているので、Claude Code が入っていて" +
-        "ログイン済みである必要があります。API キーは要りません。",
+        "Google Cloud Translation API キーを設定するか、Claude Code を入れて" +
+        "ログインしてください。両方あれば Google を高速経路、Claude をフォールバックに使います。",
       detail: String(err),
       install: true,
     };
@@ -893,9 +939,21 @@ function renderSetup() {
 
 /** Re-probes and repaints the setup pane, leaving the current pane alone. */
 async function revalidate(candidate?: Settings): Promise<CliBlock | null> {
-  blocked = await probeCli(candidate);
+  const next = candidate ?? settings;
+  const cliProblem = await probeCli(next);
+  const googleReady =
+    next.google_translate_enabled && !!googleKeyStatus?.configured;
+  // Google is a usable primary route on its own. Claude remains valuable as a
+  // fallback, but its absence must not replace a working translate pane with
+  // the setup screen.
+  blocked = googleReady ? null : cliProblem;
+  if (googleReady) {
+    el.backendBadge.textContent = cliProblem
+      ? "Google NMT"
+      : `Google NMT → claude ${cliStatus?.version ?? "?"}`;
+  }
   renderSetup();
-  return blocked;
+  return cliProblem;
 }
 
 /**
@@ -922,6 +980,35 @@ async function checkCli() {
     setStatus(el.settingsStatus, `${found} · ログイン済み`, "ok");
   } else {
     setStatus(el.settingsStatus, `${found} を検出`, "ok");
+  }
+}
+
+function renderGoogleKeyStatus() {
+  const status = googleKeyStatus;
+  if (!status?.configured) {
+    setStatus(el.googleKeyStatus, "未設定");
+  } else if (status.source === "environment") {
+    setStatus(
+      el.googleKeyStatus,
+      "環境変数 GOOGLE_TRANSLATE_API_KEY から設定済み",
+      "ok",
+    );
+  } else {
+    setStatus(el.googleKeyStatus, "OS の資格情報ストアに保存済み", "ok");
+  }
+
+  el.googleApiKey.disabled = status?.canStore === false;
+  el.btnGoogleSave.disabled = status?.canStore === false;
+  el.btnGoogleDelete.disabled = status?.source !== "keychain";
+}
+
+async function refreshGoogleKeyStatus() {
+  try {
+    googleKeyStatus = await invoke<GoogleApiKeyStatus>("google_api_key_status");
+    renderGoogleKeyStatus();
+  } catch (err) {
+    googleKeyStatus = null;
+    setStatus(el.googleKeyStatus, String(err), "error");
   }
 }
 
@@ -1126,9 +1213,46 @@ el.btnConsentDecline.addEventListener("click", () => {
 // Everything else in the pane. Checkboxes commit on the spot; the two typed
 // fields wait for the typing to stop, and again when the field is left, so
 // tabbing away or pressing Enter does not sit on an unsaved keystroke.
-for (const box of [el.setClipboardAuto, el.setAutoCopy, el.setUpdateCheck]) {
+for (const box of [
+  el.setGoogleEnabled,
+  el.setClipboardAuto,
+  el.setAutoCopy,
+  el.setUpdateCheck,
+]) {
   box.addEventListener("change", () => scheduleSave());
 }
+
+el.btnGoogleSave.addEventListener("click", async () => {
+  const apiKey = el.googleApiKey.value.trim();
+  if (!apiKey) {
+    setStatus(el.googleKeyStatus, "API キーを入力してください", "error");
+    return;
+  }
+
+  el.btnGoogleSave.disabled = true;
+  try {
+    googleKeyStatus = await invoke<GoogleApiKeyStatus>("save_google_api_key", {
+      apiKey,
+    });
+    el.googleApiKey.value = "";
+    renderGoogleKeyStatus();
+    await revalidate();
+  } catch (err) {
+    setStatus(el.googleKeyStatus, String(err), "error");
+  } finally {
+    el.btnGoogleSave.disabled = googleKeyStatus?.canStore === false;
+  }
+});
+
+el.btnGoogleDelete.addEventListener("click", async () => {
+  try {
+    googleKeyStatus = await invoke<GoogleApiKeyStatus>("delete_google_api_key");
+    renderGoogleKeyStatus();
+    await revalidate();
+  } catch (err) {
+    setStatus(el.googleKeyStatus, String(err), "error");
+  }
+});
 
 for (const field of [el.setClaudeBin, el.setDoubleCopyWindow, el.setTimeout]) {
   field.addEventListener("input", () => scheduleSave(TYPING_SETTLE_MS));
@@ -1307,6 +1431,7 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   el.welcomeGesture.textContent = COPY_KEY;
   el.confirmHintKey.textContent = RUN_KEY;
   settings = await invoke<Settings>("get_settings");
+  await refreshGoogleKeyStatus();
   applySettingsToUi();
 
   // Asked on the first launch only, and only where there is something to
