@@ -38,7 +38,7 @@
     "targets": ["app", "dmg", "nsis"],
     "category": "Productivity",
     "shortDescription": "コピー 2 回で開く翻訳アプリ",
-    "longDescription": "⌘C を 2 回押すと開いて、コピーしたテキストをその場で翻訳する。翻訳は手元の Claude Code CLI に投げるので、Claude のサブスクがあれば API キーは要らない。",
+    "longDescription": "⌘C を 2 回押すと開いて、コピーしたテキストをその場で翻訳する。短い通常文は Google NMT、文体指定・コード・失敗時は手元の Claude Code CLI に切り替える。",
     "license": "MIT OR Apache-2.0",
     "homepage": "https://github.com/hashibadaiki/konjac",
     "publisher": "hashibadaiki",

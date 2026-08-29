@@ -54,8 +54,13 @@ pub const SETUP_DOCS_URL: &str = "https://docs.claude.com/en/docs/claude-code/se
 #[derive(Debug, Serialize)]
 pub struct TranslateResult {
     pub text: String,
+    /// `google` or `claude` — kept separate from the model so the UI can say
+    /// which route actually answered.
+    pub provider: String,
     pub model: String,
     pub elapsed_ms: u128,
+    /// Present when Google was attempted first but Claude had to finish the run.
+    pub fallback_reason: Option<String>,
 }
 
 /// What the settings pane, the title badge and the setup pane are all driven
@@ -641,8 +646,10 @@ pub async fn translate(
 
     Ok(TranslateResult {
         text: output,
+        provider: "claude".into(),
         model: settings.model.clone(),
         elapsed_ms: started.elapsed().as_millis(),
+        fallback_reason: None,
     })
 }
 

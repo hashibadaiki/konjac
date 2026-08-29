@@ -1,11 +1,12 @@
 mod clipboard_watch;
+mod google_translate;
 mod key_watch;
 mod settings;
 mod translate;
 mod update;
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clipboard_watch::Watcher;
 use settings::Settings;
@@ -16,6 +17,9 @@ use translate::TranslateResult;
 struct AppState {
     settings: Mutex<Settings>,
     watcher: Arc<Watcher>,
+    /// Clones share a connection pool, so successive short Google requests can
+    /// reuse DNS/TLS state instead of rebuilding it for every translation.
+    google_client: reqwest::Client,
 }
 
 fn read_settings(state: &State<AppState>) -> Result<Settings, String> {
@@ -226,7 +230,37 @@ async fn translate(
     stream_id: u32,
 ) -> Result<TranslateResult, String> {
     let current = read_settings(&state)?;
-    translate::translate(
+    let started = Instant::now();
+    let mut google_failure: Option<String> = None;
+
+    if current.google_translate_enabled && google_translate::eligible(&text, &tone) {
+        match google_translate::api_key() {
+            Ok(Some(api_key)) => match google_translate::translate(
+                &state.google_client,
+                &api_key,
+                text.trim(),
+                &source_lang,
+                &target_lang,
+            )
+            .await
+            {
+                Ok(output) => {
+                    return Ok(TranslateResult {
+                        text: output,
+                        provider: "google".into(),
+                        model: "nmt".into(),
+                        elapsed_ms: started.elapsed().as_millis(),
+                        fallback_reason: None,
+                    });
+                }
+                Err(message) => google_failure = Some(message),
+            },
+            Ok(None) => {}
+            Err(message) => google_failure = Some(message),
+        }
+    }
+
+    let claude_result = translate::translate(
         &current,
         &text,
         &source_lang,
@@ -242,7 +276,38 @@ async fn translate(
             );
         },
     )
-    .await
+    .await;
+
+    match claude_result {
+        Ok(mut result) => {
+            result.elapsed_ms = started.elapsed().as_millis();
+            result.fallback_reason = google_failure;
+            Ok(result)
+        }
+        Err(claude_error) => match google_failure {
+            Some(google_error) => Err(format!(
+                "Google NMT に失敗し、Claude Code への切り替えにも失敗しました。\n\nGoogle: {google_error}\nClaude: {claude_error}"
+            )),
+            None => Err(claude_error),
+        },
+    }
+}
+
+#[tauri::command]
+fn google_api_key_status() -> Result<google_translate::ApiKeyStatus, String> {
+    google_translate::api_key_status()
+}
+
+#[tauri::command]
+fn save_google_api_key(api_key: String) -> Result<google_translate::ApiKeyStatus, String> {
+    google_translate::store_api_key(&api_key)?;
+    google_translate::api_key_status()
+}
+
+#[tauri::command]
+fn delete_google_api_key() -> Result<google_translate::ApiKeyStatus, String> {
+    google_translate::delete_api_key()?;
+    google_translate::api_key_status()
 }
 
 #[tauri::command]
@@ -510,6 +575,7 @@ pub fn run() {
             app.manage(AppState {
                 settings: Mutex::new(loaded),
                 watcher: watcher.clone(),
+                google_client: reqwest::Client::new(),
             });
 
             // Prefer the keyboard monitor where permitted: it sees ⌘C presses
@@ -539,6 +605,9 @@ pub fn run() {
             get_settings,
             save_settings,
             translate,
+            google_api_key_status,
+            save_google_api_key,
+            delete_google_api_key,
             check_cli,
             write_clipboard,
             platform_supports_double_copy,

@@ -1,6 +1,25 @@
 # 仕組み
 
-`claude` をワンショットで起動して、翻訳対象を標準入力に流し込むだけ。
+翻訳経路は 2 本ある。API キーが設定済みで、**標準の文体・5,000字以内・コードや URL なし**の
+短い通常文なら Google Cloud Translation Basic の NMT へ直接送る。それ以外は `claude` CLI。
+
+```
+翻訳要求
+  ├─ Google NMT の対象 → REST API（5 秒上限）
+  │                         └─ 失敗 → Claude Code
+  └─ 文体指定 / 長文 / コード・URL → Claude Code
+```
+
+Google 用の HTTP クライアントはアプリ内で使い回し、接続プールを再利用する。API キーは URL では
+なく `x-goog-api-key` ヘッダーへ入れ、`settings.json` ではなく macOS Keychain / Windows 資格情報
+マネージャーに保存する。`GOOGLE_TRANSLATE_API_KEY` 環境変数があれば、そちらを優先する。
+
+Google は全文が完成してから一度に返る。5 秒以内に応答しない、認証・利用上限・通信などで失敗
+した場合は、そのまま待たせ続けず Claude Code を起動する。結果欄には実際に使った経路が出る。
+
+## Claude Code の経路
+
+`claude` をワンショットで起動して、翻訳対象を標準入力に流し込む。
 
 ```
 claude --print
@@ -249,9 +268,9 @@ DeepL がこの操作に対応できているのは、**キーボードイベン
 操作説明そのものも検出方式に合わせて出し分けているので、いま何が効く操作なのかは
 設定画面のチェックボックス直下に書いてある。
 
-## 他のプロバイダを足すとき
+## 翻訳経路を足すとき
 
-CLI の呼び出しは `translate.rs` の `run_cli_streaming` / `run_cli` に閉じていて、
-`translate()` が唯一の入口。Codex CLI なり Anthropic API 直叩きなりを足すなら、同じ形の
-関数（断片ごとに `on_delta` を呼び、完成した訳文を返す）を書いて `translate()` で
-分岐させれば済む。プロンプト生成（`system_prompt`）はプロバイダに依存していない。
+Google の通信・言語コード・資格情報は `google_translate.rs`、Claude CLI は `translate.rs` に
+閉じている。どちらを試すかとフォールバックの順番だけを `lib.rs` の Tauri `translate` コマンドが
+決める。別の経路を足す場合も、各モジュールは完成した訳文かエラーを返し、順序と画面へ返す
+プロバイダー名を `lib.rs` で組み立てる。

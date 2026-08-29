@@ -9,8 +9,9 @@ Windows 版も配布しているが、いまは[動かない見込み](#ダウ�
 [⌘C] [⌘C] → ウィンドウ表示 → コピーしたテキストを翻訳 → [Esc] で消える
 ```
 
-翻訳の中身は **手元の `claude` CLI（Claude Code）をワンショットで叩いて** 実現している。
-つまり Claude のサブスクを持っていれば、API キーなしでそのまま使える。
+短い通常文は **Google Cloud Translation NMT** へ直接送り、文体指定・コードや URL を含む文書・
+Google の失敗時は **手元の `claude` CLI（Claude Code）**へ自動で切り替える。Google を設定
+しなければ、これまでどおり Claude のサブスクだけでも使える。
 
 ## デモ
 
@@ -38,11 +39,12 @@ https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 
 直るまでは macOS の `.dmg` を使ってほしい。
 
-> **必要なもの**: [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) が
-> インストール済みで、ログインまで通っていること。無ければ初回起動時に案内が出る。
+> **必要なもの**: Google Cloud Translation API キー、またはログイン済みの
+> [Claude Code](https://docs.claude.com/en/docs/claude-code/setup)。両方あれば Google を高速経路、
+> Claude Code をフォールバックとして使う（Google 単独では短い通常文のみ）。
 >
 > **⌘C 2 回は既定でオフ。** 有効にすると、検出した瞬間にクリップボードの本文を読んで
-> Anthropic へ送ることになるので、何が送られるかを提示したうえで同意を取ってから
+> 選択中の外部翻訳サービスへ送ることになるので、何が送られるかを提示したうえで同意を取ってから
 > 有効になる（→ [プライバシー](docs/privacy.md)）。
 
 ## できること
@@ -51,6 +53,7 @@ https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
   アクセシビリティを許可すれば **⌘ を押しっぱなしのまま C を 2 回**でも反応する
 - **トレイ（macOS はメニューバー）常駐** — ウィンドウを閉じても残る。開き直すのと終了はここから
 - 言語 16 種＋入れ替え、文体 4 種、モデル切り替え（`opus` / `sonnet` / `haiku` / `fable`）
+- **Google NMT の高速経路**＋失敗時の Claude Code 自動フォールバック
 - **ストリーミング表示**・結果のその場編集・自動コピー
 - **更新の通知と、いざというときの停止**（[自動更新はしない](docs/updates.md)）
 
@@ -72,9 +75,9 @@ https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 | | |
 |---|---|
 | [プライバシー](docs/privacy.md) | 何を・いつ送るか。既定でクリップボードを読まない理由 |
-| [インストール](docs/install.md) | Claude Code の準備、初回起動の警告、⌘C 2 回とアクセシビリティの有効化、対応 OS |
+| [インストール](docs/install.md) | Google / Claude Code の準備、初回起動の警告、⌘C 2 回とアクセシビリティの有効化、対応 OS |
 | [使い方](docs/usage.md) | 前面表示、モデルの選び方、設定の保存先 |
-| [仕組み](docs/how-it-works.md) | `claude` の叩き方、ストリーミング、入力長の限界、⌘C ⌘C の検出方式 |
+| [仕組み](docs/how-it-works.md) | Google→Claude の経路、ストリーミング、入力長の限界、⌘C ⌘C の検出方式 |
 | [更新の通知とキルスイッチ](docs/updates.md) | 自動更新を入れていない理由と、代わりに入っているもの |
 | [詰まりやすいところ](docs/troubleshooting.md) | `claude` が見つからない、⌘C 2 回が反応しない、など |
 | [開発](docs/development.md) | ビルド、テスト、CI、ディレクトリ構成 |

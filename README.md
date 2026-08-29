@@ -9,9 +9,9 @@ Windows builds are published too, but they are [not expected to work yet](#downl
 [⌘C] [⌘C] → window appears → the copied text is translated → [Esc] to dismiss
 ```
 
-Translation itself is done by **shelling out to the `claude` CLI (Claude Code) on your
-machine**, one shot per request. If you have a Claude subscription, it just works — no
-API key needed.
+Short, plain text takes a fast path through **Google Cloud Translation NMT**. Tone-aware
+text, code/URLs, and Google failures automatically fall back to the local **`claude` CLI
+(Claude Code)**. Without Google configured it still works from a Claude subscription alone.
 
 ## Demo
 
@@ -40,11 +40,13 @@ at all**.
 
 Until that is fixed, use the macOS `.dmg`.
 
-> **Requirements**: [Claude Code](https://docs.claude.com/en/docs/claude-code/setup)
-> installed and logged in. If it is missing, the app says so on first launch.
+> **Requirements**: a Google Cloud Translation API key or
+> [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) installed and logged in.
+> With both configured, Google is the fast path and Claude Code is the fallback
+> (Google alone covers only short, plain text).
 >
 > **Double ⌘C is off by default.** Turning it on means the app reads the clipboard the
-> moment it detects the gesture and sends that text to Anthropic, so it asks for consent
+> moment it detects the gesture and sends that text to the selected translation service, so it asks for consent
 > — spelling out what gets sent — before the switch takes (→ [Privacy](docs/privacy.md),
 > in Japanese).
 
@@ -56,6 +58,7 @@ Until that is fixed, use the macOS `.dmg`.
   reopen and quit from there
 - 16 languages with a swap button, 4 tones, and a model picker
   (`opus` / `sonnet` / `haiku` / `fable`)
+- **Google NMT fast path** with automatic Claude Code fallback
 - **Streaming output**, editable results, optional auto-copy
 - **Update notices and a kill switch** — [no auto-update](docs/updates.md)
 
@@ -79,9 +82,9 @@ The detailed docs are written in Japanese.
 | | |
 |---|---|
 | [プライバシー / Privacy](docs/privacy.md) | What is sent and when, and why the clipboard is not read by default |
-| [インストール / Install](docs/install.md) | Setting up Claude Code, getting past the first-launch warning, enabling double ⌘C and Accessibility, supported OS versions |
+| [インストール / Install](docs/install.md) | Setting up Google / Claude Code, getting past the first-launch warning, enabling double ⌘C and Accessibility, supported OS versions |
 | [使い方 / Usage](docs/usage.md) | Window behaviour, picking a model, where settings are stored |
-| [仕組み / How it works](docs/how-it-works.md) | How `claude` is invoked, streaming, input-length limits, how the double ⌘C is detected |
+| [仕組み / How it works](docs/how-it-works.md) | Google → Claude routing, streaming, input-length limits, how the double ⌘C is detected |
 | [更新の通知とキルスイッチ / Updates](docs/updates.md) | Why there is no auto-update, and what is there instead |
 | [詰まりやすいところ / Troubleshooting](docs/troubleshooting.md) | `claude` not found, double ⌘C not firing, and friends |
 | [開発 / Development](docs/development.md) | Build, test, CI, directory layout |
