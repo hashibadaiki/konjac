@@ -13,8 +13,11 @@ import {
 // ---------------------------------------------------------------- types
 
 interface Settings {
+  /** `plamo` (on this machine) or `claude` (the `claude` CLI). */
+  engine: "plamo" | "claude";
   /** `0.8b` / `2b` / `8b` / `31b` — see `models.rs`. */
   model_size: string;
+  claude_bin: string;
   source_lang: string;
   target_lang: string;
   tone: string;
@@ -22,6 +25,7 @@ interface Settings {
   double_copy_window_ms: number;
   clipboard_auto_translate: boolean;
   auto_copy_result: boolean;
+  timeout_secs: number;
   check_for_updates: boolean;
 }
 
@@ -36,12 +40,25 @@ interface Verdict {
 
 interface TranslateResult {
   text: string;
+  engine: "plamo" | "claude";
   /** The model size that answered. */
   model: string;
   /** Language codes actually used; see `plamo::direction`. */
   source: string | null;
   target: string;
   elapsedMs: number;
+}
+
+/** What `check_cli` reports about the `claude` it found. */
+interface CliStatus {
+  version: string;
+  path: string;
+  /** Non-empty means the CLI predates flags the app cannot translate without. */
+  missingFlags: string[];
+  streaming: boolean;
+  apiKeyInEnv: boolean;
+  /** `null` when the CLI is too old to be asked whether it has a session. */
+  loggedIn: boolean | null;
 }
 
 /** One model size, as `model_statuses` reports it. */
@@ -126,6 +143,14 @@ const TONES: [string, string][] = [
 
 /** Only reached if the select somehow has no value; `settings.rs` has the same. */
 const DEFAULT_MODEL = "0.8b";
+
+/**
+ * The model dropdown's entry for the other engine. It sits in the same list as
+ * the PLaMo sizes because, to the person picking, it is the same question:
+ * what translates this.
+ */
+const CLAUDE_CHOICE = "claude";
+const CLAUDE_NAME = "Claude Haiku 5.5";
 
 const LANGUAGE_NAMES: Record<string, string> = {
   ja: "日本語",
@@ -246,6 +271,11 @@ const el = {
   setUpdateCheck: $<HTMLInputElement>("set-update-check"),
   btnCheckUpdate: $<HTMLButtonElement>("btn-check-update"),
   updateStatus: $<HTMLSpanElement>("update-status"),
+  setClaudeBin: $<HTMLInputElement>("set-claude-bin"),
+  setTimeout: $<HTMLInputElement>("set-timeout"),
+  btnCheck: $<HTMLButtonElement>("btn-check"),
+  btnClaudeDocs: $<HTMLButtonElement>("btn-claude-docs"),
+  cliStatus: $<HTMLParagraphElement>("cli-status"),
   settingsStatus: $<HTMLParagraphElement>("settings-status"),
 };
 
@@ -368,7 +398,9 @@ function setBusy(next: boolean) {
   elapsedTimer = undefined;
   if (!next) return;
 
-  el.loadingLabel.textContent = `${modelName(el.model.value)} で翻訳しています…`;
+  el.loadingLabel.textContent = `${
+    usesClaude() ? CLAUDE_NAME : modelName(el.model.value)
+  } で翻訳しています…`;
   const started = performance.now();
   const tick = () => {
     const seconds = (performance.now() - started) / 1000;
@@ -407,16 +439,28 @@ function setConfirmHint(show: boolean) {
 /** How a model is named on screen. */
 const modelName = (size: string) => `PLaMo 3 ${size.toUpperCase()}`;
 
+/** Whether the dropdown is on the Claude entry right now. */
+const usesClaude = () => el.model.value === CLAUDE_CHOICE;
+
+/** The engine and size the model dropdown stands for. */
+function choiceFromUi(): Pick<Settings, "engine" | "model_size"> {
+  if (usesClaude()) {
+    return { engine: "claude", model_size: settings.model_size };
+  }
+  return { engine: "plamo", model_size: el.model.value || DEFAULT_MODEL };
+}
+
 /**
- * The model only takes a register for Japanese output, so the dropdown is
- * greyed out for anything else rather than offering a choice that does nothing.
+ * PLaMo only takes a register for Japanese output, so the dropdown is greyed
+ * out for anything else rather than offering a choice that does nothing.
+ * Claude takes one for any language.
  */
 function syncTone() {
-  const japanese = el.targetLang.value === "Japanese";
-  el.tone.disabled = !japanese;
-  el.tone.title = japanese
+  const usable = usesClaude() || el.targetLang.value === "Japanese";
+  el.tone.disabled = !usable;
+  el.tone.title = usable
     ? "訳文の文体"
-    : "文体を選べるのは翻訳先が日本語のときだけ";
+    : "端末内モデルで文体を選べるのは翻訳先が日本語のときだけ";
 }
 
 // ---------------------------------------------------------------- settings
@@ -436,8 +480,11 @@ function applySettingsToUi() {
   el.sourceLang.value = settings.source_lang;
   el.targetLang.value = settings.target_lang;
   el.tone.value = settings.tone;
-  el.model.value = settings.model_size;
+  el.model.value =
+    settings.engine === "claude" ? CLAUDE_CHOICE : settings.model_size;
   el.setupModel.value = settings.model_size;
+  setFieldValue(el.setClaudeBin, settings.claude_bin);
+  setFieldValue(el.setTimeout, String(settings.timeout_secs));
 
   el.setDoubleCopy.checked = settings.double_copy_enabled;
   setFieldValue(el.setDoubleCopyWindow, String(settings.double_copy_window_ms));
@@ -579,7 +626,9 @@ function setDiagnosticsPolling(pane: Pane) {
 
 function readSettingsFromUi(): Settings {
   return {
-    model_size: el.model.value || DEFAULT_MODEL,
+    ...choiceFromUi(),
+    claude_bin: el.setClaudeBin.value.trim() || "claude",
+    timeout_secs: Math.min(600, Math.max(5, Number(el.setTimeout.value) || 30)),
     source_lang: el.sourceLang.value,
     target_lang: el.targetLang.value,
     tone: el.tone.value,
@@ -643,7 +692,7 @@ async function persistChoice() {
     source_lang: el.sourceLang.value,
     target_lang: el.targetLang.value,
     tone: el.tone.value,
-    model_size: el.model.value || settings.model_size,
+    ...choiceFromUi(),
   });
 }
 
@@ -694,9 +743,10 @@ async function translate(text: string) {
             LANGUAGE_NAMES[result.target] ?? result.target
           }）`
         : "";
+    const answered = result.engine === "claude" ? CLAUDE_NAME : modelName(result.model);
     setStatus(
       el.status,
-      `${modelName(result.model)}${flipped} · ${(result.elapsedMs / 1000).toFixed(1)}s`,
+      `${answered}${flipped} · ${(result.elapsedMs / 1000).toFixed(1)}s`,
       "ok",
     );
     if (settings.auto_copy_result) {
@@ -780,7 +830,9 @@ const statusOf = (size: string) =>
  * the download pane at someone who has the model already.
  */
 const needsModel = () =>
-  !!modelsReport && !statusOf(settings.model_size)?.installed;
+  settings.engine === "plamo" &&
+  !!modelsReport &&
+  !statusOf(settings.model_size)?.installed;
 
 /** The dropdown wording: the size, what it is for, and whether it is here. */
 function modelOptionLabel(model: ModelStatus) {
@@ -803,17 +855,29 @@ function renderModels() {
   const report = modelsReport;
   if (!report) return;
 
-  for (const select of [el.model, el.setupModel]) {
-    select.replaceChildren(
-      ...report.models.map((model) => new Option(modelOptionLabel(model), model.size)),
-    );
-    select.value = settings.model_size;
-  }
+  const sizes = () =>
+    report.models.map((model) => new Option(modelOptionLabel(model), model.size));
+
+  const onDevice = document.createElement("optgroup");
+  onDevice.label = "端末内（PLaMo 3 Translate・外部に送らない）";
+  onDevice.append(...sizes());
+  const remote = document.createElement("optgroup");
+  remote.label = "Claude Code（Anthropic に送信）";
+  remote.append(new Option(CLAUDE_NAME, CLAUDE_CHOICE));
+  el.model.replaceChildren(onDevice, remote);
+  el.model.value =
+    settings.engine === "claude" ? CLAUDE_CHOICE : settings.model_size;
+
+  el.setupModel.replaceChildren(...sizes());
+  el.setupModel.value = settings.model_size;
 
   const selected = statusOf(settings.model_size);
-  el.backendBadge.textContent = selected?.installed
-    ? modelName(settings.model_size)
-    : `${modelName(settings.model_size)} · 未ダウンロード`;
+  el.backendBadge.textContent =
+    settings.engine === "claude"
+      ? CLAUDE_NAME
+      : selected?.installed
+        ? modelName(settings.model_size)
+        : `${modelName(settings.model_size)} · 未ダウンロード`;
 
   const downloading = report.downloading;
   const progress = downloadProgress;
@@ -844,7 +908,10 @@ function renderModels() {
 
       const name = document.createElement("span");
       name.className = "models__name";
-      name.classList.toggle("is-selected", model.size === settings.model_size);
+      name.classList.toggle(
+        "is-selected",
+        settings.engine === "plamo" && model.size === settings.model_size,
+      );
       name.textContent = model.label;
 
       const state = document.createElement("span");
@@ -949,15 +1016,55 @@ async function deleteModel(size: string) {
 }
 
 /** A size picked in either dropdown is saved, and may need downloading. */
-async function chooseModel(size: string) {
+async function chooseModel(choice: string) {
   deleteArmed = null;
-  el.model.value = size;
+  el.model.value = choice;
+  syncTone();
   await persistChoice();
   // Landing on a model that is not here yet sends you to fetch it; picking one
   // that is, from the download pane, sends you back.
   const onTranslate = !el.paneTranslate.classList.contains("hidden");
   const onSetup = !el.paneSetup.classList.contains("hidden");
   if (onTranslate || onSetup) showPane(homePane());
+}
+
+// ------------------------------------------------------------------ claude
+
+/**
+ * Asks the `claude` CLI whether it can translate: found, new enough, signed
+ * in. Nothing goes over the network for this — the CLI answers locally.
+ */
+async function checkCli() {
+  setStatus(el.cliStatus, "確認中…");
+  let status: CliStatus;
+  try {
+    status = await invoke<CliStatus>("check_cli", { settings: readSettingsFromUi() });
+  } catch (err) {
+    setStatus(el.cliStatus, String(err), "error");
+    return;
+  }
+  const found = `claude ${status.version}`;
+  if (status.missingFlags.length) {
+    setStatus(
+      el.cliStatus,
+      `${found} は古すぎます（${status.missingFlags.join(" ")} がない）。更新してください。`,
+      "error",
+    );
+  } else if (status.loggedIn === false) {
+    setStatus(
+      el.cliStatus,
+      `${found} · ログインしていません。ターミナルで claude を起動し /login を実行してください。`,
+      "error",
+    );
+  } else if (status.apiKeyInEnv) {
+    setStatus(
+      el.cliStatus,
+      `${found} · ANTHROPIC_API_KEY が設定されているので、サブスクではなく API キー側に課金されます。`,
+      "error",
+    );
+  } else {
+    setStatus(el.cliStatus, `${found} · 使えます`, "ok");
+  }
 }
 
 // ------------------------------------------------------------------ updates
@@ -1171,7 +1278,7 @@ for (const box of [
   box.addEventListener("change", () => scheduleSave());
 }
 
-for (const field of [el.setDoubleCopyWindow]) {
+for (const field of [el.setDoubleCopyWindow, el.setClaudeBin, el.setTimeout]) {
   field.addEventListener("input", () => scheduleSave(TYPING_SETTLE_MS));
   field.addEventListener("change", () => scheduleSave());
   field.addEventListener("blur", () => scheduleSave());
@@ -1238,6 +1345,8 @@ el.btnSetupCancel.addEventListener("click", () => invoke("cancel_download"));
 el.btnSettingsCancel.addEventListener("click", () => invoke("cancel_download"));
 el.btnSetupLicense.addEventListener("click", () => invoke("open_model_license"));
 el.btnLicense.addEventListener("click", () => invoke("open_model_license"));
+el.btnCheck.addEventListener("click", checkCli);
+el.btnClaudeDocs.addEventListener("click", () => invoke("open_setup_docs"));
 
 // Minimize parks the window in the taskbar/Dock, where it is still visible and
 // clickable; ✕ hides it outright and leaves the tray icon as the way back.

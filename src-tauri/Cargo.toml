@@ -26,7 +26,7 @@ tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["fs", "io-util", "time", "rt"] }
+tokio = { version = "1", features = ["fs", "process", "io-util", "time", "rt"] }
 # Fetches the model weights from Hugging Face, once, the first time a size is
 # used. Translation itself never touches the network.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "system-proxy"] }

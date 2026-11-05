@@ -1,3 +1,4 @@
+mod claude;
 mod clipboard_watch;
 mod engine;
 mod key_watch;
@@ -262,7 +263,9 @@ struct DeltaPayload {
 #[serde(rename_all = "camelCase")]
 struct TranslateResult {
     text: String,
-    /// The model size that answered, e.g. `2b`.
+    /// `plamo` or `claude`.
+    engine: String,
+    /// What answered: a PLaMo size such as `2b`, or the Claude model id.
     model: String,
     /// The language codes actually used. Can differ from what was asked: with
     /// the source on auto, Japanese text into Japanese goes to English.
@@ -283,6 +286,35 @@ async fn translate(
 ) -> Result<TranslateResult, String> {
     let current = read_settings(&state)?;
     let started = Instant::now();
+
+    if current.engine == settings::ENGINE_CLAUDE {
+        let target = plamo::language_code(&target_lang).map(str::to_owned);
+        let text = claude::translate(
+            &current,
+            &text,
+            &source_lang,
+            &target_lang,
+            &tone,
+            move |chunk| {
+                let _ = app.emit(
+                    "translate-delta",
+                    DeltaPayload {
+                        id: stream_id,
+                        text: chunk.to_owned(),
+                    },
+                );
+            },
+        )
+        .await?;
+        return Ok(TranslateResult {
+            text,
+            engine: settings::ENGINE_CLAUDE.into(),
+            model: claude::MODEL.into(),
+            source: None,
+            target: target.unwrap_or_else(|| target_lang.clone()),
+            elapsed_ms: started.elapsed().as_millis(),
+        });
+    }
 
     let path = installed_model(&app, &current.model_size)?.ok_or_else(|| {
         format!(
@@ -317,11 +349,24 @@ async fn translate(
 
     Ok(TranslateResult {
         text: output,
+        engine: settings::ENGINE_PLAMO.into(),
         model: current.model_size,
         source,
         target,
         elapsed_ms: started.elapsed().as_millis(),
     })
+}
+
+/// What the `claude` CLI looks like from here: found, new enough, signed in.
+#[tauri::command]
+async fn check_cli(settings: Settings) -> Result<claude::CliStatus, String> {
+    claude::check_cli(&settings.normalized()).await
+}
+
+/// Opens the Claude Code install page. A constant, like [`open_model_license`].
+#[tauri::command]
+fn open_setup_docs() {
+    open_external(claude::SETUP_DOCS_URL);
 }
 
 /// Every model, whether it is on disk, and which one is downloading now.
@@ -692,6 +737,8 @@ pub fn run() {
             cancel_download,
             delete_model,
             open_model_license,
+            check_cli,
+            open_setup_docs,
             write_clipboard,
             platform_supports_double_copy,
             clipboard_status,

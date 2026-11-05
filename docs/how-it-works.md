@@ -4,6 +4,11 @@
 （Rust バインディング `llama-cpp-2`）でこの端末の中で動かして行う。外部の API にも CLI にも
 投げない。
 
+もう一つのエンジンとして、モデル欄で **Claude Haiku 5.5** を選ぶと手元の `claude` CLI に
+`claude -p --model claude-haiku-5-5` で投げる（`claude.rs`）。呼び方・翻訳対象のランダムな
+タグでの囲い・`stream-json` でのストリーミング・無応答タイマーは 0.1.3 までの Claude 経路と
+同じ。以下は PLaMo の話。
+
 ```
 翻訳要求
   → plamo.rs: 言語コードと文体を決め、プロンプト（PFML3）を組む

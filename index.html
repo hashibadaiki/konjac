@@ -70,7 +70,7 @@
 
       <div class="langbar">
         <select id="tone" aria-label="文体" title="訳文の文体（翻訳先が日本語のときだけ効く）"></select>
-        <select id="model" aria-label="モデル" title="翻訳に使う PLaMo 3 Translate のサイズ"></select>
+        <select id="model" aria-label="モデル" title="翻訳に使うモデル"></select>
       </div>
 
       <textarea
@@ -207,7 +207,8 @@
 
       <p class="note note--warn">
         有効にすると、2 回目を検出したその瞬間に<strong>クリップボードの本文を読み</strong>、
-        入力欄に入れて翻訳する。翻訳はこの端末の中で行い、<strong>本文を外部へは送らない</strong>。
+        入力欄に入れて翻訳する。端末内モデルなら<strong>本文を外部へは送らない</strong>。
+        Claude Code を選んでいるときは Anthropic に送る。
         それ以外のときは本文を見ない。パスワードなどをコピーした直後に誤検出が起きれば、
         それがウィンドウに表示されることになる。
       </p>
@@ -224,8 +225,9 @@
 
     <section class="pane pane--settings hidden" id="pane-settings">
       <p class="note">
-        翻訳は PLaMo 3 Translate をこの端末の中で動かして行い、文章を外部へ送らない。
-        <strong>変更はその場で保存される。</strong>
+        翻訳エンジンは翻訳画面右上のモデル欄で選ぶ。<strong>端末内（PLaMo 3 Translate）</strong>は
+        文章を外部へ送らない。<strong>Claude Code（Haiku 5.5）</strong>は手元の <code>claude</code> CLI を
+        通して Anthropic に送って翻訳する。<strong>変更はその場で保存される。</strong>
       </p>
 
       <h2 class="subhead">翻訳モデル</h2>
@@ -256,6 +258,31 @@
         <button class="btn" id="btn-license">ライセンスを読む</button>
       </div>
 
+      <h2 class="subhead">Claude Code</h2>
+
+      <p class="note note--tip">
+        モデル欄で「Claude Haiku 5.5」を選んだときに使う。手元の <code>claude</code> CLI を
+        <code>claude -p</code> で呼び、Claude Code のログイン（サブスク）で翻訳する。
+        <strong>このときは文章が Anthropic に送られる。</strong>
+      </p>
+
+      <label class="field">
+        <span>claude 実行ファイル</span>
+        <input id="set-claude-bin" type="text" placeholder="claude（または絶対パス）" spellcheck="false" />
+      </label>
+
+      <label class="field">
+        <span>応答が途切れてから中止するまで（秒。既定 30）</span>
+        <input id="set-timeout" type="number" min="5" max="600" step="5" />
+      </label>
+
+      <div class="actions">
+        <button class="btn" id="btn-check">Claude Code を確認</button>
+        <button class="btn" id="btn-claude-docs">インストール手順</button>
+      </div>
+
+      <p class="status status--block" id="cli-status"></p>
+
       <h2 class="subhead">起動方法</h2>
 
       <label class="field field--row">
@@ -274,10 +301,13 @@
       <div class="note note--warn hidden" id="consent-prompt">
         <p>
           <strong>有効にすると、コピーした内容をこのアプリが読み取ります。</strong>
+          Claude Code を選んでいる間は、その内容が Anthropic に送信されます。
         </p>
         <p>
           コピー 2 回を検出した瞬間に<strong>クリップボードの本文を読み取り</strong>、
-          この端末の中の翻訳モデルで翻訳する。<strong>本文を外部へ送ることはない</strong>。
+          選んでいるエンジンで翻訳する。端末内モデル（PLaMo 3 Translate）なら
+          <strong>本文を外部へ送ることはない</strong>。Claude Code なら <code>claude</code> CLI 経由で
+          <strong>Anthropic</strong> に送る。
           ただしパスワード・アクセストークン・社内文書などがクリップボードに入っている状態で
           誤検出が起きれば、それらがウィンドウに表示されることになる。
         </p>
@@ -296,7 +326,8 @@
            send and when" is answerable after the one-time dialog is gone. -->
       <p class="note note--warn hidden" id="double-copy-privacy">
         <strong>読み取り:</strong> 2 回目を検出した瞬間にクリップボードの本文を読み、
-        この端末の中で翻訳する。外部へは送らない。チェックを外せば、読み取りも止まる。
+        選んでいるエンジンで翻訳する（端末内モデルなら外部へ送らない、Claude Code なら
+        Anthropic に送る）。チェックを外せば、読み取りも止まる。
       </p>
 
       <p class="note note--tip hidden" id="double-copy-gesture">—</p>

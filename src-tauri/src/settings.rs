@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
+/// The on-device engine, and the one a fresh install uses.
+pub const ENGINE_PLAMO: &str = "plamo";
+/// The `claude` CLI.
+pub const ENGINE_CLAUDE: &str = "claude";
+
 /// The marker recording that the user has been told what enabling the gesture
 /// sends, and where, and agreed to it. See [`Settings::gated`].
 pub const CLIPBOARD_CONSENT: &str = "clipboard-consent";
@@ -12,9 +17,16 @@ pub const CLIPBOARD_CONSENT: &str = "clipboard-consent";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Which engine translates: `plamo` (on this machine) or `claude` (the
+    /// `claude` CLI, which sends the text to Anthropic).
+    pub engine: String,
     /// Which PLaMo 3 Translate model translates: `0.8b`, `2b`, `8b` or `31b`.
-    /// See [`crate::models::MODELS`].
+    /// See [`crate::models::MODELS`]. Kept while `engine` is `claude`, so
+    /// switching back lands on the same size.
     pub model_size: String,
+    /// Path to (or bare name of) the `claude` executable, for the `claude`
+    /// engine.
+    pub claude_bin: String,
     pub source_lang: String,
     pub target_lang: String,
     /// The register of a Japanese translation: `default`, `polite` (です・ます)
@@ -36,6 +48,9 @@ pub struct Settings {
     /// to this.
     pub clipboard_auto_translate: bool,
     pub auto_copy_result: bool,
+    /// For the `claude` engine: how long the CLI may go without a word before
+    /// the run is abandoned. Idle, not total — see `claude::run_cli_streaming`.
+    pub timeout_secs: u64,
     /// Whether to ask GitHub for the newest release on launch and say so when
     /// this build is behind it.
     ///
@@ -49,7 +64,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            engine: ENGINE_PLAMO.into(),
             model_size: crate::models::DEFAULT_SIZE.into(),
+            claude_bin: "claude".into(),
             source_lang: "auto".into(),
             target_lang: "Japanese".into(),
             tone: "default".into(),
@@ -64,6 +81,10 @@ impl Default for Settings {
             double_copy_window_ms: 600,
             clipboard_auto_translate: false,
             auto_copy_result: false,
+            // Idle, not total. All it has to cover is the wait for the CLI's
+            // first event, measured at 2-8 seconds; once text flows the gaps are
+            // well under a second.
+            timeout_secs: 30,
             // On, unlike the clipboard gesture above. The two are not the same
             // kind of ask: that one reads what the user copied, this one asks a public endpoint what the newest tag
             // is and sends nothing of the user's at all. Defaulting it off
@@ -92,6 +113,14 @@ impl Settings {
             self.model_size = crate::models::DEFAULT_SIZE.into();
         }
         self.model_size = self.model_size.trim().to_owned();
+        if self.engine != ENGINE_CLAUDE {
+            self.engine = ENGINE_PLAMO.into();
+        }
+        self.claude_bin = self.claude_bin.trim().to_owned();
+        if self.claude_bin.is_empty() {
+            self.claude_bin = "claude".into();
+        }
+        self.timeout_secs = self.timeout_secs.clamp(5, 600);
         self.tone = normalized_tone(&self.tone).into();
         // A language the model does not offer (Portuguese, which the Claude
         // route used to translate) falls back rather than failing every translation until changed.
@@ -297,9 +326,37 @@ mod tests {
         .unwrap();
         let settings = settings.normalized();
         assert_eq!(settings.model_size, crate::models::DEFAULT_SIZE);
+        assert_eq!(settings.engine, ENGINE_PLAMO);
         assert_eq!(settings.tone, "polite");
         assert_eq!(settings.target_lang, "Japanese");
         assert!(settings.auto_copy_result);
+    }
+
+    #[test]
+    fn engine_and_cli_fields_are_normalized() {
+        let settings = Settings {
+            engine: "gpt".into(),
+            claude_bin: "  ".into(),
+            timeout_secs: 0,
+            ..Settings::default()
+        }
+        .normalized();
+        assert_eq!(settings.engine, ENGINE_PLAMO);
+        assert_eq!(settings.claude_bin, "claude");
+        assert_eq!(settings.timeout_secs, 5);
+
+        let claude = Settings {
+            engine: ENGINE_CLAUDE.into(),
+            ..Settings::default()
+        }
+        .normalized();
+        assert_eq!(claude.engine, ENGINE_CLAUDE);
+    }
+
+    /// A fresh install translates on the machine; Claude is something to opt into.
+    #[test]
+    fn a_fresh_install_uses_the_on_device_engine() {
+        assert_eq!(Settings::default().engine, ENGINE_PLAMO);
     }
 
     #[test]

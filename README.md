@@ -14,6 +14,10 @@ Translation runs **on your machine** with Preferred Networks' open-weight
 is downloaded once from Hugging Face the first time you use it; after that, nothing you
 translate leaves the machine and no network connection is needed.
 
+Alternatively, pick **Claude Haiku 5.5** in the model menu to translate through the local
+`claude` CLI (Claude Code, `claude -p`) on your Claude subscription. That engine **sends
+the text to Anthropic**.
+
 ## Demo
 
 https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
@@ -61,6 +65,7 @@ Until someone runs it, use the macOS `.dmg`.
 - 15 languages with a swap button, a register picker for Japanese output
   (です・ます / だ・である), and a model-size picker (0.8B / 2B / 8B / 31B)
 - **Fully on-device translation** with PLaMo 3 Translate — no API key, no account
+- **Claude Haiku 5.5 via Claude Code** as a selectable alternative (sends the text to Anthropic)
 - **Streaming output**, editable results, optional auto-copy
 - **Update notices and a kill switch** — [no auto-update](docs/updates.md)
 
