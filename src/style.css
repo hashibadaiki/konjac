@@ -190,7 +190,7 @@ body {
 /*
  * A button that does not look like one until you go near it: it is the way back
  * to the translate pane, and a titlebar with a second obvious control in it
- * would compete with the ⚙ − ✕ at the other end.
+ * would compete with the window buttons.
  */
 .titlebar__name {
   display: flex;

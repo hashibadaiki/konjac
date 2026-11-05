@@ -5,8 +5,8 @@
 //! fragment on as it lands so a long text can be read while it is still being
 //! written.
 //!
-//! The model is fixed to Claude Haiku 5.5: translation is a fixed transform,
-//! and the smallest current model is the quick one.
+//! The model is Claude Haiku: translation is a fixed transform, and the
+//! smallest current model is the quick one.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// The model the CLI is asked for. A full id rather than the `haiku` alias, so
-/// a new alias target does not change the translations under the user.
-pub const MODEL: &str = "claude-haiku-5-5";
+/// The `haiku` alias rather than a full id, so a new Haiku is picked up without
+/// a release and the name shown in the app never goes stale.
+pub const MODEL: &str = "haiku";
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::settings::Settings;
