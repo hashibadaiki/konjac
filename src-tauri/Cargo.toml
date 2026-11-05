@@ -1,6 +1,6 @@
 [package]
 name = "konjac"
-version = "0.1.3"
+version = "0.2.0"
 description = "Shortcut-driven translator running PLaMo 3 Translate on device"
 edition = "2021"
 rust-version = "1.77"
