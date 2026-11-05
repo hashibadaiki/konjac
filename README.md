@@ -20,7 +20,7 @@ the text to Anthropic**.
 
 ## Demo
 
-https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
+https://github.com/user-attachments/assets/635d6680-36f0-4da6-aa56-ff033c469d1a
 
 ## Download
 
