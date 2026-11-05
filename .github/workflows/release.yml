@@ -161,6 +161,14 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.rust_targets }}
 
+      # Cargo checks `llama-cpp-2` out from git, submodules and all, and the
+      # llama.cpp inside carries web UI sources nested deep enough to pass
+      # Windows' 260-character limit under ~/.cargo/git/checkouts — the v0.2.0
+      # build died on "path too long". Cargo's libgit2 honours this setting.
+      - name: Allow long paths in git checkouts
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
