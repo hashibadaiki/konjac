@@ -73,8 +73,8 @@ jobs:
         working-directory: src-tauri
         run: cargo build
 
-      # The `#[ignore]`d tests are left out: they spawn the real `claude`, which
-      # needs a logged-in subscription no CI runner has.
+      # The `#[ignore]`d tests are left out: they load a real PLaMo 3 Translate
+      # GGUF (`KONJAC_TEST_GGUF`), gigabytes no CI runner downloads.
       - name: Test
         working-directory: src-tauri
         run: cargo test

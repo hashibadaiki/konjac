@@ -43,10 +43,12 @@ Developer ID Application 証明書を用意して、リポジトリの secrets �
 未署名アプリでは**実行ファイルのパスと内容**で覚えるので、アプリを更新するたびに
 許可が外れる。署名済みなら Team ID と bundle ID で覚えるため、更新をまたいで残る。
 
-entitlements ファイルは置いていない。必要が無いため:
-`claude` の子プロセス起動は Hardened Runtime の制限対象ではなく、キーボード監視は
-entitlement ではなくアクセシビリティ許可で決まり、WebView の JIT は OS 側の別プロセスに
-ある。**App Sandbox は有効にしない** — 有効にすると `claude` を起動できなくなる。
+entitlements ファイルは置いていない。必要が無いはずのため: 外向きの通信（モデルの
+ダウンロード）は Hardened Runtime の制限対象ではなく、キーボード監視は entitlement ではなく
+アクセシビリティ許可で決まり、WebView の JIT は OS 側の別プロセスにある。llama.cpp の Metal
+（GPU）利用が署名済みビルドで通るかは、まだ署名済みの実機で確かめていない。
+**App Sandbox は有効にしない** — 有効にするとモデルのダウンロードと保存に entitlement が要り、
+いまの構成を見直すことになる。
 
 Windows は署名していない。OV/EV 証明書が必要で、費用対効果が「詳細情報 → 実行」の
 2 クリックに見合わないと判断した。

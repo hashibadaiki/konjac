@@ -1,10 +1,13 @@
+mod claude;
 mod clipboard_watch;
-mod google_translate;
+mod engine;
 mod key_watch;
+mod models;
+mod plamo;
 mod settings;
-mod translate;
 mod update;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -12,14 +15,46 @@ use clipboard_watch::Watcher;
 use settings::Settings;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
-use translate::TranslateResult;
 
 struct AppState {
     settings: Mutex<Settings>,
     watcher: Arc<Watcher>,
-    /// Clones share a connection pool, so successive short Google requests can
-    /// reuse DNS/TLS state instead of rebuilding it for every translation.
-    google_client: reqwest::Client,
+    engine: Arc<engine::Engine>,
+    downloads: Arc<models::Downloads>,
+    /// Only ever talks to Hugging Face, to fetch a model.
+    http: reqwest::Client,
+}
+
+/// Where the model files live. Unlike the settings this is not split between
+/// debug and release builds: the files are gigabytes, identical for both, and
+/// downloading each one twice to keep two builds apart would buy nothing.
+fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("models"))
+        .map_err(|e| format!("モデルの保存先を決められません: {e}"))
+}
+
+/// The selected model's file, when it is on disk.
+fn installed_model(app: &AppHandle, size: &str) -> Result<Option<PathBuf>, String> {
+    let model = models::find(size).ok_or_else(|| format!("知らないモデルです: {size}"))?;
+    let path = model.path(&models_dir(app)?);
+    Ok(path.is_file().then_some(path))
+}
+
+/// Reads the selected model in on a thread of its own, so the first
+/// translation does not pay for it. Best-effort: a model that will not load
+/// says so again, properly, when a translation asks for it.
+fn preload(app: &AppHandle, engine: &Arc<engine::Engine>, size: &str) {
+    let Ok(Some(path)) = installed_model(app, size) else {
+        return;
+    };
+    let engine = engine.clone();
+    std::thread::spawn(move || {
+        if let Err(err) = engine.preload(&path) {
+            eprintln!("konjac: {err}");
+        }
+    });
 }
 
 fn read_settings(state: &State<AppState>) -> Result<Settings, String> {
@@ -116,7 +151,7 @@ fn clipboard_status(state: State<AppState>) -> clipboard_watch::WatchStatus {
     state.watcher.status()
 }
 
-/// Whether the user has agreed to the clipboard being read and sent. Asked at
+/// Whether the user has agreed to the clipboard being read. Asked at
 /// boot so the settings pane knows whether ticking the box needs the disclosure
 /// put in front of the user first.
 #[tauri::command]
@@ -185,8 +220,13 @@ fn save_settings(
     // true`, but it is the frontend — the flag is only trustworthy once it has
     // been through the same gate the loader applies.
     let next = settings.normalized().gated(settings::consent_granted(&app));
+    let previous_size = read_settings(&state)?.model_size;
 
     settings::store(&app, &next)?;
+
+    if next.model_size != previous_size {
+        preload(&app, &state.engine, &next.model_size);
+    }
 
     state
         .watcher
@@ -219,6 +259,21 @@ struct DeltaPayload {
     text: String,
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranslateResult {
+    text: String,
+    /// `plamo` or `claude`.
+    engine: String,
+    /// What answered: a PLaMo size such as `2b`, or the Claude model id.
+    model: String,
+    /// The language codes actually used. Can differ from what was asked: with
+    /// the source on auto, Japanese text into Japanese goes to English.
+    source: Option<String>,
+    target: String,
+    elapsed_ms: u128,
+}
+
 #[tauri::command]
 async fn translate(
     app: AppHandle,
@@ -231,42 +286,55 @@ async fn translate(
 ) -> Result<TranslateResult, String> {
     let current = read_settings(&state)?;
     let started = Instant::now();
-    let mut google_failure: Option<String> = None;
 
-    if current.google_translate_enabled && google_translate::eligible(&text, &tone) {
-        match google_translate::api_key() {
-            Ok(Some(api_key)) => match google_translate::translate(
-                &state.google_client,
-                &api_key,
-                text.trim(),
-                &source_lang,
-                &target_lang,
-            )
-            .await
-            {
-                Ok(output) => {
-                    return Ok(TranslateResult {
-                        text: output,
-                        provider: "google".into(),
-                        model: "nmt".into(),
-                        elapsed_ms: started.elapsed().as_millis(),
-                        fallback_reason: None,
-                    });
-                }
-                Err(message) => google_failure = Some(message),
+    if current.engine == settings::ENGINE_CLAUDE {
+        let target = plamo::language_code(&target_lang).map(str::to_owned);
+        let text = claude::translate(
+            &current,
+            &text,
+            &source_lang,
+            &target_lang,
+            &tone,
+            move |chunk| {
+                let _ = app.emit(
+                    "translate-delta",
+                    DeltaPayload {
+                        id: stream_id,
+                        text: chunk.to_owned(),
+                    },
+                );
             },
-            Ok(None) => {}
-            Err(message) => google_failure = Some(message),
-        }
+        )
+        .await?;
+        return Ok(TranslateResult {
+            text,
+            engine: settings::ENGINE_CLAUDE.into(),
+            model: claude::MODEL.into(),
+            source: None,
+            target: target.unwrap_or_else(|| target_lang.clone()),
+            elapsed_ms: started.elapsed().as_millis(),
+        });
     }
 
-    let claude_result = translate::translate(
-        &current,
-        &text,
-        &source_lang,
-        &target_lang,
-        &tone,
-        move |chunk| {
+    let path = installed_model(&app, &current.model_size)?.ok_or_else(|| {
+        format!(
+            "モデル {} がまだダウンロードされていません。設定画面からダウンロードしてください。",
+            current.model_size
+        )
+    })?;
+    let direction = plamo::direction(&source_lang, &target_lang, &text)?;
+    let form = plamo::form(&tone, direction.target);
+    let source = direction.source.map(str::to_owned);
+    let target = direction.target.to_owned();
+
+    let engine = state.engine.clone();
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        let request = engine::Request {
+            text: &text,
+            direction,
+            form,
+        };
+        engine.translate(&path, &request, |chunk| {
             let _ = app.emit(
                 "translate-delta",
                 DeltaPayload {
@@ -274,45 +342,91 @@ async fn translate(
                     text: chunk.to_owned(),
                 },
             );
-        },
-    )
-    .await;
+        })
+    })
+    .await
+    .map_err(|e| format!("翻訳が異常終了しました: {e}"))??;
 
-    match claude_result {
-        Ok(mut result) => {
-            result.elapsed_ms = started.elapsed().as_millis();
-            result.fallback_reason = google_failure;
-            Ok(result)
-        }
-        Err(claude_error) => match google_failure {
-            Some(google_error) => Err(format!(
-                "Google NMT に失敗し、Claude Code への切り替えにも失敗しました。\n\nGoogle: {google_error}\nClaude: {claude_error}"
-            )),
-            None => Err(claude_error),
-        },
+    Ok(TranslateResult {
+        text: output,
+        engine: settings::ENGINE_PLAMO.into(),
+        model: current.model_size,
+        source,
+        target,
+        elapsed_ms: started.elapsed().as_millis(),
+    })
+}
+
+/// What the `claude` CLI looks like from here: found, new enough, signed in.
+#[tauri::command]
+async fn check_cli(settings: Settings) -> Result<claude::CliStatus, String> {
+    claude::check_cli(&settings.normalized()).await
+}
+
+/// Opens the Claude Code install page. A constant, like [`open_model_license`].
+#[tauri::command]
+fn open_setup_docs() {
+    open_external(claude::SETUP_DOCS_URL);
+}
+
+/// Every model, whether it is on disk, and which one is downloading now.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelsReport {
+    models: Vec<models::ModelStatus>,
+    downloading: Option<&'static str>,
+    dir: String,
+}
+
+#[tauri::command]
+fn model_statuses(app: AppHandle, state: State<AppState>) -> Result<ModelsReport, String> {
+    let dir = models_dir(&app)?;
+    Ok(ModelsReport {
+        models: models::statuses(&dir),
+        downloading: state.downloads.active(),
+        dir: dir.display().to_string(),
+    })
+}
+
+/// Fetches a model, reporting progress as `model-download` events. Resolves
+/// once the file is verified and in place.
+#[tauri::command]
+async fn download_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    size: String,
+) -> Result<(), String> {
+    let model = models::find(&size).ok_or_else(|| format!("知らないモデルです: {size}"))?;
+    let dir = models_dir(&app)?;
+    let emitter = app.clone();
+    models::download(&state.downloads, &state.http, &dir, model, move |progress| {
+        let _ = emitter.emit("model-download", progress);
+    })
+    .await?;
+
+    // The usual reason to download one is to use it straight away.
+    if read_settings(&state)?.model_size == size {
+        preload(&app, &state.engine, &size);
     }
+    Ok(())
 }
 
 #[tauri::command]
-fn google_api_key_status() -> Result<google_translate::ApiKeyStatus, String> {
-    google_translate::api_key_status()
+fn cancel_download(state: State<AppState>) {
+    state.downloads.cancel();
 }
 
 #[tauri::command]
-fn save_google_api_key(api_key: String) -> Result<google_translate::ApiKeyStatus, String> {
-    google_translate::store_api_key(&api_key)?;
-    google_translate::api_key_status()
-}
-
-#[tauri::command]
-fn delete_google_api_key() -> Result<google_translate::ApiKeyStatus, String> {
-    google_translate::delete_api_key()?;
-    google_translate::api_key_status()
-}
-
-#[tauri::command]
-async fn check_cli(settings: Settings) -> Result<translate::CliStatus, String> {
-    translate::check_cli(&settings.normalized()).await
+fn delete_model(app: AppHandle, state: State<AppState>, size: String) -> Result<(), String> {
+    let model = models::find(&size).ok_or_else(|| format!("知らないモデルです: {size}"))?;
+    if state.downloads.active() == Some(model.size) {
+        return Err("ダウンロード中のモデルは削除できません。先に中止してください。".into());
+    }
+    let dir = models_dir(&app)?;
+    // Let go of it first. The file is memory-mapped while loaded, and Windows
+    // refuses to delete a file that is.
+    state.engine.unload(&model.path(&dir));
+    models::delete(&dir, model)
 }
 
 /// Hands a URL to whatever the platform opens links with.
@@ -347,11 +461,11 @@ fn open_external(url: &str) {
     let _ = command.spawn();
 }
 
-/// Opens the Claude Code install page in the default browser. Takes no argument
-/// on purpose: the URL is a constant, so the frontend cannot aim this anywhere.
+/// Opens the model licence in the default browser. Takes no argument on
+/// purpose: the URL is a constant, so the frontend cannot aim this anywhere.
 #[tauri::command]
-fn open_setup_docs() {
-    open_external(translate::SETUP_DOCS_URL);
+fn open_model_license() {
+    open_external(models::LICENSE_URL);
 }
 
 /// What this build calls itself. Shown in the settings pane, and compared
@@ -394,7 +508,7 @@ fn halt_watching(state: State<AppState>) -> Result<(), String> {
 }
 
 /// Opens the page where a fixed build is downloaded. A constant, like
-/// [`open_setup_docs`].
+/// [`open_model_license`].
 #[tauri::command]
 fn open_releases_page() {
     open_external(update::RELEASES_PAGE_URL);
@@ -572,10 +686,23 @@ pub fn run() {
             // Before `loaded` is handed over to the state it lives in.
             request_accessibility_once(&handle, &loaded);
 
+            let engine = Arc::new(engine::Engine::default());
+            preload(&handle, &engine, &loaded.model_size);
+
+            let http = reqwest::Client::builder()
+                .user_agent(concat!("konjac/", env!("CARGO_PKG_VERSION")))
+                .connect_timeout(Duration::from_secs(15))
+                // Per read, not for the whole file: a model takes minutes.
+                .read_timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|e| format!("HTTP クライアントを作れません: {e}"))?;
+
             app.manage(AppState {
                 settings: Mutex::new(loaded),
                 watcher: watcher.clone(),
-                google_client: reqwest::Client::new(),
+                engine,
+                downloads: Arc::default(),
+                http,
             });
 
             // Prefer the keyboard monitor where permitted: it sees ⌘C presses
@@ -605,10 +732,13 @@ pub fn run() {
             get_settings,
             save_settings,
             translate,
-            google_api_key_status,
-            save_google_api_key,
-            delete_google_api_key,
+            model_statuses,
+            download_model,
+            cancel_download,
+            delete_model,
+            open_model_license,
             check_cli,
+            open_setup_docs,
             write_clipboard,
             platform_supports_double_copy,
             clipboard_status,
@@ -618,7 +748,6 @@ pub fn run() {
             mark_first_run_answered,
             open_accessibility_settings,
             recheck_accessibility,
-            open_setup_docs,
             app_version,
             check_versions,
             halt_watching,

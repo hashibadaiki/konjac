@@ -16,6 +16,21 @@ Rust エコシステムの慣例に合わせてある。依存ツリーは Tauri
 自由だが、その場合は別の名前を付けてほしい。同じ名前の別物があると、どちらに
 バグを報告すればいいのか分からなくなるため。
 
+## 翻訳モデル
+
+翻訳に使う **PLaMo 3 Translate**（Preferred Networks）の重みは、このリポジトリにも配布物にも
+**含まれていない**。ユーザーがアプリの中から Hugging Face（`pfnet/plamo-3-translate-*-GGUF`）
+から自分でダウンロードする。上の MIT / Apache-2.0 は重みには及ばない。
+
+重みのライセンスは
+[PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-en)。
+個人・研究・非商用の利用は登録なしで使えるが、**商用利用には条件がある**。業務で使うなら、
+ダウンロードの前に読んで条件を確かめること（アプリのダウンロード画面と設定画面にも
+「ライセンスを読む」ボタンがある）。
+
+推論には [llama.cpp](https://github.com/ggml-org/llama.cpp)（MIT）を、Rust バインディングの
+`llama-cpp-2` / `llama-cpp-sys-2` クレート経由で静的にリンクしている。
+
 ## 依存ライブラリについて
 
 強いコピーレフトのライブラリは入っていない。MPL-2.0 のクレート

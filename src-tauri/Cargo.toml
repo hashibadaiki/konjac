@@ -1,7 +1,7 @@
 [package]
 name = "konjac"
 version = "0.1.3"
-description = "Shortcut-driven translator backed by Claude"
+description = "Shortcut-driven translator running PLaMo 3 Translate on device"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT OR Apache-2.0"
@@ -26,13 +26,21 @@ tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["process", "io-util", "time", "rt"] }
-# Reuse one HTTP client across translations so the Google fast path keeps its
-# connection pool instead of paying a fresh TLS setup for every short string.
+tokio = { version = "1", features = ["fs", "process", "io-util", "time", "rt"] }
+# Fetches the model weights from Hugging Face, once, the first time a size is
+# used. Translation itself never touches the network.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "system-proxy"] }
-# API keys do not belong in settings.json. Version 3 keeps the crate's MSRV
-# below this application's declared Rust 1.77 floor.
-keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native"] }
+# A downloaded model is only moved into place once it hashes to what Hugging
+# Face lists for it.
+sha2 = "0.10"
+# PLaMo 3 Translate runs in-process through llama.cpp. Pinned to a git
+# revision, not a crates.io release: PFN's official GGUFs declare the `plamo3`
+# tokenizer, which the llama.cpp bundled with 0.1.161 (the newest release)
+# rejects as "unknown tokenizer". This revision (0.1.162, ggml 0.28) knows it,
+# and is the one `conao3/rust-plamo-tr-local` translates with. Move back to a
+# crates.io version once one ships with it. Default features are off because
+# they pull in OpenMP, which would have to ship alongside the app.
+llama-cpp-2 = { git = "https://github.com/utilityai/llama-cpp-rs", rev = "0364f5da1c6a6ee37f507031f116ce4a09b28594", default-features = false }
 
 [dev-dependencies]
 # `#[tokio::test]` needs the attribute macro; the app itself does not.
@@ -57,6 +65,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "NSString",
   "NSValue",
 ] }
+# Every layer on the GPU. Without this the model runs on the CPU, several times
+# slower.
+llama-cpp-2 = { git = "https://github.com/utilityai/llama-cpp-rs", rev = "0364f5da1c6a6ee37f507031f116ce4a09b28594", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_DataExchange"] }

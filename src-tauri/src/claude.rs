@@ -1,14 +1,22 @@
-//! Translation shells out to the local `claude` CLI, so it uses whatever
-//! credentials Claude Code already holds — a Claude subscription in the common
-//! case. The CLI streams its answer, and [`translate`] passes each fragment on
-//! as it lands so a long text can be read while it is still being written.
-//! Other providers can be added behind [`translate`] later.
+//! The other engine: the local `claude` CLI, chosen in the settings instead of
+//! the on-device model. It uses whatever credentials Claude Code already holds —
+//! a Claude subscription in the common case — and, unlike PLaMo, sends the text
+//! to Anthropic. The CLI streams its answer, and [`translate`] passes each
+//! fragment on as it lands so a long text can be read while it is still being
+//! written.
+//!
+//! The model is fixed to Claude Haiku 5.5: translation is a fixed transform,
+//! and the smallest current model is the quick one.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+/// The model the CLI is asked for. A full id rather than the `haiku` alias, so
+/// a new alias target does not change the translations under the user.
+pub const MODEL: &str = "claude-haiku-5-5";
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::settings::Settings;
@@ -51,18 +59,6 @@ const API_KEY_VAR: &str = "ANTHROPIC_API_KEY";
 /// in from the frontend, so the "open the docs" command has nothing to inject.
 pub const SETUP_DOCS_URL: &str = "https://docs.claude.com/en/docs/claude-code/setup";
 
-#[derive(Debug, Serialize)]
-pub struct TranslateResult {
-    pub text: String,
-    /// `google` or `claude` — kept separate from the model so the UI can say
-    /// which route actually answered.
-    pub provider: String,
-    pub model: String,
-    pub elapsed_ms: u128,
-    /// Present when Google was attempted first but Claude had to finish the run.
-    pub fallback_reason: Option<String>,
-}
-
 /// What the settings pane, the title badge and the setup pane are all driven
 /// from: enough to tell "no CLI" from "a CLI too old to use" from "ready".
 #[derive(Debug, Serialize)]
@@ -91,8 +87,16 @@ pub struct CliStatus {
 
 fn tone_line(tone: &str) -> &'static str {
     match tone {
-        "formal" => "Use polite, professional register suitable for business writing.",
-        "casual" => "Use natural, conversational register.",
+        // The settings' two registers. For Japanese output these are です・ます
+        // and だ・である; the wording below is what asks for them.
+        "polite" | "formal" => {
+            "Use polite, professional register suitable for business writing. \
+             In Japanese, write in the です・ます style."
+        }
+        "plain" | "casual" => {
+            "Use natural, conversational register. In Japanese, write in the \
+             だ・である (plain) style."
+        }
         "technical" => {
             "Use precise technical register. Keep established technical terminology \
              in its conventional form for the target language."
@@ -329,7 +333,7 @@ fn cli_error_message(envelope: &CliEnvelope) -> String {
     }
 }
 
-fn base_command(bin: &Path, settings: &Settings, system: &str) -> tokio::process::Command {
+fn base_command(bin: &Path, system: &str) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(bin);
     command
         // Translation is a fixed transform with nothing to reason about, but
@@ -339,7 +343,7 @@ fn base_command(bin: &Path, settings: &Settings, system: &str) -> tokio::process
         .env("MAX_THINKING_TOKENS", "0")
         .arg("--print")
         .arg("--model")
-        .arg(&settings.model)
+        .arg(MODEL)
         // No file access, no MCP, no CLAUDE.md/skills/hooks, no saved session:
         // this is a one-shot text transform, not a coding session.
         .arg("--tools")
@@ -378,7 +382,7 @@ async fn feed_stdin(child: &mut tokio::process::Child, text: &str) -> Result<(),
 async fn run_cli(settings: &Settings, system: &str, text: &str) -> Result<String, String> {
     let bin = resolve_claude_bin(&settings.claude_bin)?;
 
-    let mut command = base_command(&bin, settings, system);
+    let mut command = base_command(&bin, system);
     command.arg("--output-format").arg("json");
 
     let mut child = command
@@ -493,7 +497,7 @@ async fn run_cli_streaming(
 ) -> Result<String, CliError> {
     let bin = resolve_claude_bin(&settings.claude_bin).map_err(CliError::Failed)?;
 
-    let mut command = base_command(&bin, settings, system);
+    let mut command = base_command(&bin, system);
     command
         .arg("--output-format")
         .arg("stream-json")
@@ -623,7 +627,7 @@ pub async fn translate(
     target_lang: &str,
     tone: &str,
     on_delta: impl Fn(&str) + Send + Sync,
-) -> Result<TranslateResult, String> {
+) -> Result<String, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("翻訳するテキストがありません。".into());
@@ -634,7 +638,6 @@ pub async fn translate(
     let marker = source_marker(text);
     let system = system_prompt(source_lang, target_lang, tone, &marker);
     let payload = wrap_source(text, &marker);
-    let started = Instant::now();
 
     let output = match run_cli_streaming(settings, &system, &payload, &on_delta).await {
         Ok(output) => output,
@@ -644,13 +647,7 @@ pub async fn translate(
         Err(CliError::StreamingUnsupported) => run_cli(settings, &system, &payload).await?,
     };
 
-    Ok(TranslateResult {
-        text: output,
-        provider: "claude".into(),
-        model: settings.model.clone(),
-        elapsed_ms: started.elapsed().as_millis(),
-        fallback_reason: None,
-    })
+    Ok(output)
 }
 
 /// Runs the CLI with one informational flag and hands back its stdout.
@@ -986,10 +983,7 @@ mod tests {
     async fn streams_through_the_real_cli() {
         use std::sync::Mutex;
 
-        let settings = Settings {
-            model: "haiku".into(),
-            ..Settings::default()
-        };
+        let settings = Settings::default();
         let chunks: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
         let text = "Streaming means the translation appears while it is still being written. \
@@ -1021,10 +1015,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "spawns the real claude CLI"]
     async fn the_one_shot_fallback_still_translates() {
-        let settings = Settings {
-            model: "haiku".into(),
-            ..Settings::default()
-        };
+        let settings = Settings::default();
 
         let marker = source_marker("Good morning.");
 
@@ -1046,10 +1037,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "spawns the real claude CLI"]
     async fn the_account_context_stays_out_of_the_translation() {
-        let settings = Settings {
-            model: "haiku".into(),
-            ..Settings::default()
-        };
+        let settings = Settings::default();
 
         // Before the boundary went in, this came back as the address itself.
         let output = translate(
@@ -1064,9 +1052,8 @@ mod tests {
         .expect("translation should succeed");
 
         assert!(
-            !output.text.contains('@'),
-            "the account context reached the translation: {}",
-            output.text
+            !output.contains('@'),
+            "the account context reached the translation: {output}"
         );
     }
 
