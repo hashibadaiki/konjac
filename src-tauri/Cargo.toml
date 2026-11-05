@@ -33,11 +33,14 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 # A downloaded model is only moved into place once it hashes to what Hugging
 # Face lists for it.
 sha2 = "0.10"
-# PLaMo 3 Translate runs in-process through llama.cpp. Pinned exactly: the
-# bundled llama.cpp is what has to know the `plamo3` architecture, and a minor
-# bump moves it. Default features are off because they pull in OpenMP, which
-# would have to be shipped alongside the app on macOS.
-llama-cpp-2 = { version = "=0.1.161", default-features = false }
+# PLaMo 3 Translate runs in-process through llama.cpp. Pinned to a git
+# revision, not a crates.io release: PFN's official GGUFs declare the `plamo3`
+# tokenizer, which the llama.cpp bundled with 0.1.161 (the newest release)
+# rejects as "unknown tokenizer". This revision (0.1.162, ggml 0.28) knows it,
+# and is the one `conao3/rust-plamo-tr-local` translates with. Move back to a
+# crates.io version once one ships with it. Default features are off because
+# they pull in OpenMP, which would have to ship alongside the app.
+llama-cpp-2 = { git = "https://github.com/utilityai/llama-cpp-rs", rev = "0364f5da1c6a6ee37f507031f116ce4a09b28594", default-features = false }
 
 [dev-dependencies]
 # `#[tokio::test]` needs the attribute macro; the app itself does not.
@@ -64,7 +67,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 ] }
 # Every layer on the GPU. Without this the model runs on the CPU, several times
 # slower.
-llama-cpp-2 = { version = "=0.1.161", default-features = false, features = ["metal"] }
+llama-cpp-2 = { git = "https://github.com/utilityai/llama-cpp-rs", rev = "0364f5da1c6a6ee37f507031f116ce4a09b28594", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_DataExchange"] }

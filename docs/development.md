@@ -12,9 +12,11 @@ npm run tauri build    # 配布用ビルド
 ```
 
 依存は薄い。フロントは素の TypeScript + Vite、フレームワークなし。推論は
-`llama-cpp-2`（llama.cpp の Rust バインディング）で、バージョンは `=0.1.161` に固定している。
-同梱の llama.cpp が `plamo3` アーキテクチャを知っていることが前提なので、上げるときは
-実モデルで下のテストを通すこと。既定 feature は切ってある（OpenMP を macOS に同梱したくない
+`llama-cpp-2`（llama.cpp の Rust バインディング）で、crates.io のリリースではなく
+**GitHub の未リリース版（`utilityai/llama-cpp-rs` rev `0364f5da`）に固定している**。
+PFN の公式 GGUF は `plamo3` トークナイザを使っていて、crates.io 最新の 0.1.161 に同梱の
+llama.cpp は `unknown tokenizer: 'plamo3'` で読めないため。`plamo3` に対応した版が crates.io に
+出たら戻すこと。上げるときは実モデルで下のテストを通すこと。既定 feature は切ってある（OpenMP を macOS に同梱したくない
 ため）。macOS では `metal` を有効にする。
 
 ## 開発ビルドとインストール済みアプリの同居
