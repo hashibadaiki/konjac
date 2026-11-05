@@ -39,8 +39,8 @@ Windows is still untested, and there are known gaps:
 
 Until someone runs it, use the macOS `.dmg`.
 
-> **Requirements**: disk space and memory for the model you pick — the default 2B model is
-> about a 1.8 GB download (0.8B / 8B / 31B are also offered). The first translation needs
+> **Requirements**: disk space and memory for the model you pick — the default 0.8B model is
+> about a 0.6 GB download (2B / 8B / 31B are also offered). The first translation needs
 > a network connection to fetch it; nothing else does.
 >
 > **Model licence**: the weights are under the

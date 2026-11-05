@@ -7,7 +7,8 @@
 //! translation never touches the network.
 //!
 //! Every model is PFN's own GGUF at Q4_K_M — the quantization PFN's client
-//! defaults to, because Q4_0 measured 0.9 chrF++ lower than BF16 on FLORES+.
+//! defaults to, because Q4_0 measured 0.9 chrF++ lower than BF16 on FLORES+ —
+//! or at Q4_0 where a repository has no Q4_K_M.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,16 +19,20 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// The model a fresh install offers first: PFN's own default, small enough to
-/// download in a minute and fast enough on any Apple Silicon Mac.
-pub const DEFAULT_SIZE: &str = "2b";
+/// The model a fresh install offers first: the smallest, so the first download
+/// is half a gigabyte and the first translation is quick on any machine. A
+/// bigger one is a choice in the settings once the app has earned the space.
+pub const DEFAULT_SIZE: &str = "0.8b";
 
 /// Where to read the licence before downloading. A constant, so the command
 /// that opens it has nothing to inject.
 pub const LICENSE_URL: &str = "https://plamo.preferredai.jp/info/plamo-community-license-en";
 
 const HF: &str = "https://huggingface.co";
-const QUANT: &str = "Q4_K_M";
+/// Quantizations to take, best first. Q4_K_M is PFN's default; Q4_0 is the
+/// fallback for a repository that does not ship it — PFN's own client is only
+/// known to fetch the 0.8B model as Q4_0.
+const QUANTS: [&str; 2] = ["Q4_K_M", "Q4_0"];
 
 /// How often progress goes to the frontend. Every chunk would be thousands of
 /// events a second for nothing anyone can read.
@@ -76,9 +81,10 @@ impl Model {
     }
 
     /// What the file is called on disk here — fixed, whatever the repository
-    /// names it, so finding it again needs no network.
+    /// names it or whichever quantization it turned out to be, so finding it
+    /// again needs no network.
     pub fn file_name(&self) -> String {
-        format!("plamo-3-translate-{}-{QUANT}.gguf", self.size)
+        format!("plamo-3-translate-{}.gguf", self.size)
     }
 
     pub fn path(&self, dir: &Path) -> PathBuf {
@@ -160,28 +166,39 @@ struct Remote {
     sha256: String,
 }
 
-/// Picks the Q4_K_M GGUF out of a repository listing.
+/// Picks the GGUF to fetch out of a repository listing: the first of [`QUANTS`]
+/// the repository has.
 ///
-/// Exactly one, and not a shard: a model split over several files would need
+/// Exactly one of that quantization, and not a shard: a model split over several files would need
 /// every one of them, and the official repositories ship each quantization
 /// whole. Anything else means the repository is not laid out the way this app
 /// expects, which is worth an error rather than a guess.
 fn pick(entries: Vec<TreeEntry>) -> Result<Remote, String> {
-    let suffix = format!("-{}.gguf", QUANT.to_ascii_lowercase());
+    let quant_of = |entry: &TreeEntry| {
+        let path = entry.path.to_ascii_lowercase();
+        if path.contains("-of-") {
+            return None;
+        }
+        QUANTS
+            .iter()
+            .position(|quant| path.ends_with(&format!("-{}.gguf", quant.to_ascii_lowercase())))
+    };
+    let Some(best) = entries.iter().filter_map(quant_of).min() else {
+        return Err(format!(
+            "{} の GGUF が見つかりません",
+            QUANTS.join(" / ")
+        ));
+    };
     let mut matches: Vec<TreeEntry> = entries
         .into_iter()
-        .filter(|entry| entry.path.to_ascii_lowercase().ends_with(&suffix))
-        .filter(|entry| !entry.path.contains("-of-"))
+        .filter(|entry| quant_of(entry) == Some(best))
         .collect();
     if matches.len() != 1 {
         let found: Vec<&str> = matches.iter().map(|entry| entry.path.as_str()).collect();
         return Err(format!(
-            "{QUANT} の GGUF が 1 つに定まりません（見つかったもの: {}）",
-            if found.is_empty() {
-                "なし".to_string()
-            } else {
-                found.join(", ")
-            }
+            "{} の GGUF が 1 つに定まりません（見つかったもの: {}）",
+            QUANTS[best],
+            found.join(", ")
         ));
     }
     let entry = matches.remove(0);
@@ -449,6 +466,19 @@ mod tests {
         assert_eq!(remote.path, "plamo-q4_k_m.gguf");
     }
 
+    /// A repository without Q4_K_M still gives a model, the next best one.
+    #[test]
+    fn falls_back_to_q4_0() {
+        let remote = pick(vec![
+            entry("plamo-3-translate-0.8b-Q4_0.gguf", Some("aa")),
+            entry("plamo-3-translate-0.8b-BF16.gguf", Some("bb")),
+        ])
+        .unwrap();
+        assert_eq!(remote.path, "plamo-3-translate-0.8b-Q4_0.gguf");
+        // And Q4_0 does not match IQ4_0 by its suffix.
+        assert!(pick(vec![entry("m-IQ4_0.gguf", Some("a"))]).is_err());
+    }
+
     #[test]
     fn shards_and_ambiguity_are_refused() {
         assert!(pick(vec![entry("m-Q4_K_M-00001-of-00002.gguf", Some("a"))]).is_err());
@@ -480,7 +510,7 @@ mod tests {
     fn urls_and_names_follow_the_size() {
         let model = find("2b").unwrap();
         assert_eq!(model.repository(), "pfnet/plamo-3-translate-2b-GGUF");
-        assert_eq!(model.file_name(), "plamo-3-translate-2b-Q4_K_M.gguf");
+        assert_eq!(model.file_name(), "plamo-3-translate-2b.gguf");
         assert!(find(DEFAULT_SIZE).is_some());
         assert!(find("70b").is_none());
     }

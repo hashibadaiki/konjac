@@ -19,12 +19,13 @@ Hugging Face の公式 GGUF を落とす（[モデルの取得](#モデルの取
 
 PFN 公式の GGUF（`pfnet/plamo-3-translate-<サイズ>-GGUF`）の **Q4_K_M** を使う。PFN 自身の
 クライアント（`pfnet/plamo-translate-cli`）の既定と同じで、PFN によれば Q4_0 は FLORES+ で
-BF16 より chrF++ が 0.9 低かったため、とのこと。
+BF16 より chrF++ が 0.9 低かったため、とのこと。Q4_K_M を置いていないリポジトリでは Q4_0 を使う
+（PFN のクライアントが 0.8B を Q4_0 で取っていて、0.8B に Q4_K_M があるかは未確認のため）。
 
 | サイズ | 位置付け | ダウンロードの目安 |
 |---|---|---|
-| 0.8B | 最軽量 | 約 0.6 GB |
-| 2B（既定） | 標準 | 約 1.8 GB |
+| 0.8B（既定） | 最軽量 | 約 0.6 GB |
+| 2B | 標準 | 約 1.8 GB |
 | 8B | 高品質 | 約 5.2 GB |
 | 31B | 最高品質 | 約 19 GB |
 
@@ -146,9 +147,9 @@ engine.rs: トークン → バイト → 完結した文字だけ
 
 ```
 GET https://huggingface.co/api/models/pfnet/plamo-3-translate-<サイズ>-GGUF/tree/main
-  → Q4_K_M の .gguf をちょうど 1 つ選ぶ（分割ファイルは対象外）
+  → Q4_K_M（無ければ Q4_0）の .gguf をちょうど 1 つ選ぶ（分割ファイルは対象外）
   → その LFS の SHA-256 とサイズを控える
-GET .../resolve/main/<ファイル名>  → <保存先>/plamo-3-translate-<サイズ>-Q4_K_M.gguf.part
+GET .../resolve/main/<ファイル名>  → <保存先>/plamo-3-translate-<サイズ>.gguf.part
   → サイズと SHA-256 が一致したら .part を外して本来の名前にする
 ```
 

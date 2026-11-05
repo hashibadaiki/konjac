@@ -125,7 +125,7 @@ const TONES: [string, string][] = [
 ];
 
 /** Only reached if the select somehow has no value; `settings.rs` has the same. */
-const DEFAULT_MODEL = "2b";
+const DEFAULT_MODEL = "0.8b";
 
 const LANGUAGE_NAMES: Record<string, string> = {
   ja: "日本語",
