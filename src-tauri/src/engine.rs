@@ -32,8 +32,12 @@ fn backend() -> Result<&'static LlamaBackend, String> {
     static BACKEND: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
     BACKEND
         .get_or_init(|| {
-            // llama.cpp is chatty on stderr; nothing reads it here.
-            send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+            // llama.cpp is chatty on stderr, and nothing reads it in the app —
+            // except when a model will not load, where its log is the only
+            // place that says why. `KONJAC_LLAMA_LOG=1` leaves it on stderr.
+            if std::env::var_os("KONJAC_LLAMA_LOG").is_none() {
+                send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+            }
             LlamaBackend::init().map_err(|e| format!("llama.cpp を初期化できません: {e}"))
         })
         .as_ref()
