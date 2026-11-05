@@ -9,9 +9,10 @@ Windows 版も配布しているが、いまは[動かない見込み](#ダウ�
 [⌘C] [⌘C] → ウィンドウ表示 → コピーしたテキストを翻訳 → [Esc] で消える
 ```
 
-短い通常文は **Google Cloud Translation NMT** へ直接送り、文体指定・コードや URL を含む文書・
-Google の失敗時は **手元の `claude` CLI（Claude Code）**へ自動で切り替える。Google を設定
-しなければ、これまでどおり Claude のサブスクだけでも使える。
+翻訳は Preferred Networks のオープンウェイトモデル
+**[PLaMo 3 Translate](https://www.preferred.jp/ja/news/pr20261105)** を llama.cpp で**この端末の中で**
+動かして行う。モデルは初回に一度だけ Hugging Face からダウンロードし、それ以降は訳す文章が
+外部に出ることはなく、ネット接続も要らない。
 
 ## デモ
 
@@ -29,31 +30,34 @@ https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 **開発と動作確認は macOS でやっている。** Windows 版はタグを打つたびにビルドして配布して
 いるが、実機で一度も起動していない。
 
-そのうえでコードを読み直したところ、**いまの Windows 版はまともに動かない公算が高い**。
+Windows 版は未検証のままで、分かっている穴もある。
 
-- 下の[インストール](docs/install.md)が案内している npm 版の Claude Code を使っていると、
-  翻訳の実行時に必ず失敗する（[#27](../../issues/27)）
 - ⌘C 2 回の検出そのものが Windows では一度も発火しない疑いがある（[#28](../../issues/28)）
 - そもそも Windows にはキーボード監視が無いので、⌘C 2 回で反応しても**既定では入力欄に
   入るところまで**で、翻訳は `Ctrl+Enter` で実行することになる
+- Windows ではモデルを CPU で動かす（macOS 版は Metal で GPU を使う）ので、かなり遅い
 
-直るまでは macOS の `.dmg` を使ってほしい。
+誰かが実機で確かめるまでは macOS の `.dmg` を使ってほしい。
 
-> **必要なもの**: Google Cloud Translation API キー、またはログイン済みの
-> [Claude Code](https://docs.claude.com/en/docs/claude-code/setup)。両方あれば Google を高速経路、
-> Claude Code をフォールバックとして使う（Google 単独では短い通常文のみ）。
+> **必要なもの**: 選んだモデルぶんのディスクとメモリ。既定の 2B は約 1.8 GB のダウンロード
+> （0.8B / 8B / 31B も選べる）。ネット接続が要るのは最初にモデルを落とすときだけ。
 >
-> **⌘C 2 回は既定でオフ。** 有効にすると、検出した瞬間にクリップボードの本文を読んで
-> 選択中の外部翻訳サービスへ送ることになるので、何が送られるかを提示したうえで同意を取ってから
-> 有効になる（→ [プライバシー](docs/privacy.md)）。
+> **モデルのライセンス**: 重みは
+> [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-en)。
+> 個人・研究・非商用の利用は登録なしで使えるが、**商用利用には条件がある**ので先に読むこと。
+> 重みはアプリに同梱していない。
+>
+> **⌘C 2 回は既定でオフ。** 有効にすると、検出した瞬間にクリップボードの本文を読むことに
+> なるので、何を読むかを提示したうえで同意を取ってから有効になる（→ [プライバシー](docs/privacy.md)）。
 
 ## できること
 
 - **⌘C 2 回で起動して翻訳** — コピーした文字がそのまま入力欄に入る（既定オフ）。
   アクセシビリティを許可すれば **⌘ を押しっぱなしのまま C を 2 回**でも反応する
 - **トレイ（macOS はメニューバー）常駐** — ウィンドウを閉じても残る。開き直すのと終了はここから
-- 言語 16 種＋入れ替え、文体 4 種、モデル切り替え（`opus` / `sonnet` / `haiku` / `fable`）
-- **Google NMT の高速経路**＋失敗時の Claude Code 自動フォールバック
+- 言語 15 種＋入れ替え、日本語訳の文体（です・ます / だ・である）、モデルのサイズ切り替え
+  （0.8B / 2B / 8B / 31B）
+- **完全オンデバイスの翻訳**（PLaMo 3 Translate）。API キーもアカウントも要らない
 - **ストリーミング表示**・結果のその場編集・自動コピー
 - **更新の通知と、いざというときの停止**（[自動更新はしない](docs/updates.md)）
 
@@ -74,12 +78,12 @@ https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 
 | | |
 |---|---|
-| [プライバシー](docs/privacy.md) | 何を・いつ送るか。既定でクリップボードを読まない理由 |
-| [インストール](docs/install.md) | Google / Claude Code の準備、初回起動の警告、⌘C 2 回とアクセシビリティの有効化、対応 OS |
-| [使い方](docs/usage.md) | 前面表示、モデルの選び方、設定の保存先 |
-| [仕組み](docs/how-it-works.md) | Google→Claude の経路、ストリーミング、入力長の限界、⌘C ⌘C の検出方式 |
+| [プライバシー](docs/privacy.md) | 何を・いつ読むか、ネットに出るのは何か。既定でクリップボードを読まない理由 |
+| [インストール](docs/install.md) | モデルのダウンロード、初回起動の警告、⌘C 2 回とアクセシビリティの有効化、対応 OS |
+| [使い方](docs/usage.md) | 前面表示、モデルの選び方、設定とモデルの保存先 |
+| [仕組み](docs/how-it-works.md) | PLaMo へのプロンプト、ストリーミング、長文、モデルの取得、⌘C ⌘C の検出方式 |
 | [更新の通知とキルスイッチ](docs/updates.md) | 自動更新を入れていない理由と、代わりに入っているもの |
-| [詰まりやすいところ](docs/troubleshooting.md) | `claude` が見つからない、⌘C 2 回が反応しない、など |
+| [詰まりやすいところ](docs/troubleshooting.md) | ダウンロードの失敗、遅い・メモリが足りない、⌘C 2 回が反応しない、など |
 | [開発](docs/development.md) | ビルド、テスト、CI、ディレクトリ構成 |
 | [リリース](docs/release.md) | タグの切り方、署名と公証、配布物の検証 |
 
@@ -87,4 +91,5 @@ https://github.com/user-attachments/assets/504b6f4c-8680-48ef-8cd6-233493fa400b
 
 **MIT または Apache License 2.0** のデュアルライセンス
 （[LICENSE-MIT](LICENSE-MIT) / [LICENSE-APACHE](LICENSE-APACHE)）。
-ただし「Konjac」「コンニャク」の名前とアイコンは対象外 → [ライセンス](docs/license.md)
+ただし「Konjac」「コンニャク」の名前とアイコン、アプリがダウンロードする PLaMo 3 Translate の
+重みは対象外 → [ライセンス](docs/license.md)

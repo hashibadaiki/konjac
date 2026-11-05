@@ -1,8 +1,12 @@
 # 翻訳評価セット（英語 → 日本語）
 
 `en-ja.jsonl` は英語 20 件と、その参照訳（日本語）の対。モデルを変えたとき
-（`haiku` に落とす、バージョン固定 ID に切り替える）や、`translate.rs` の
-システムプロンプトをいじったときに、訳の質が落ちていないかを見るためのもの。
+（PLaMo 3 Translate のサイズや量子化を変える、`llama-cpp-2` を上げる）や、`plamo.rs` の
+プロンプトをいじったときに、訳の質が落ちていないかを見るためのもの。
+
+このセットは Claude を使っていた頃に作ったもの。PLaMo 3 Translate はプロンプトで指示を
+与える汎用モデルではなく翻訳専用モデルなので、`injection` の 2 件は「指示に従わないか」より
+「指示文もそのまま訳すか」を見る項目として読む。
 
 ## フォーマット
 
@@ -12,7 +16,7 @@
 |---|---|
 | `id` | `en-ja-01` … `en-ja-20` |
 | `category` | 何を見る項目か（下表） |
-| `tone` | この件を流すときの文体設定。アプリの値と同じ（`default` / `formal` / `casual` / `technical`） |
+| `tone` | この件を流すときの文体設定。作成時の値（`default` / `formal` / `casual` / `technical`）のまま。いまのアプリでは `formal` → です・ます（`polite`）、`casual` → だ・である（`plain`）、`technical` と `default` → 自動に当たる |
 | `source` | 翻訳対象の英語。`\n` は実際の改行 |
 | `reference` | 参照訳。**唯一の正解ではなく**、この程度に訳せていれば合格という基準 |
 | `must_keep` | 訳文に**そのまま含まれていなければ失格**の文字列（コード・URL・数値など）。機械チェック用 |
@@ -24,7 +28,7 @@
 
 | category | 件数 | 見ているもの |
 |---|---|---|
-| `register` | 4 | 文体設定（敬体・口語・技術文書・警告文）が訳文に効いているか |
+| `register` | 4 | 文体設定（敬体・口語・技術文書・警告文）が訳文に効いているか。いまのアプリで指定できるのは です・ます / だ・である だけ |
 | `code` | 2 | コードブロック・識別子・パス・URL を触らずに残すか |
 | `injection` | 2 | 訳文だけを返し、本文中の指示に従わないか |
 | `numbers` | 2 | 数値・単位・日付・通貨を改変しないか |
@@ -35,28 +39,15 @@
 
 ## 回し方
 
-一番手軽なのはアプリ本体。言語を `English → Japanese`、文体をその件の `tone` に合わせて
-`source` を貼る。20 件なら数分。
+一番手軽なのはアプリ本体。言語を `English → Japanese`、文体をその件の `tone` に対応する
+もの（上の表）に合わせて `source` を貼る。20 件なら数分。
 
-CLI で自動化する場合は、アプリと同じ条件で呼ぶ必要がある
-（`src-tauri/src/translate.rs` の `run_cli` と `system_prompt` が実体）。
-
-```bash
-claude --print \
-       --model <モデル> \
-       --output-format json \
-       --tools "" \
-       --safe-mode \
-       --strict-mcp-config \
-       --no-session-persistence \
-       --system-prompt "<system_prompt(\"English\", \"Japanese\", <tone>) と同じ文面>" \
-       <<< "<source>"
-```
-
-`MAX_THINKING_TOKENS=0` も付ける（アプリが設定している。付けないと haiku が
-数十秒かけて同じ答えを出す）。システムプロンプトを直書きで持たせると
-`translate.rs` を変えたときにズレるので、比較したいのが「プロンプトの変更前後」なら
-その時点の `system_prompt()` の出力を使うこと。
+自動化する場合は、アプリと同じプロンプトとデコード設定で呼ぶ必要がある
+（`src-tauri/src/plamo.rs` の `prompt` と `src-tauri/src/engine.rs` の `generate` が実体。
+貪欲デコード、貼ったテキストは特殊トークンとして解釈しない）。PFN の
+[`plamo-translate-cli`](https://github.com/pfnet/plamo-translate-cli) も同じ PFML3 形式を組むので、
+`--backend-type llama.cpp` で同じ GGUF を指定すれば近い条件で回せる。ただし文体（`form`）の
+指定はあちらには無い。
 
 ## 採点
 
@@ -68,3 +59,4 @@ claude --print \
 - **○** — `reference` と同程度
 
 × が出た件は `notes` にどう壊れたかを書き足しておくと、次にモデルを変えるときに効く。
+`notes` の中には Claude 時代の壊れ方を書いたものがある。
