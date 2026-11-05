@@ -14,7 +14,7 @@ Windows 版も配布しているが、いまは[動かない見込み](#ダウ�
 動かして行う。モデルは初回に一度だけ Hugging Face からダウンロードし、それ以降は訳す文章が
 外部に出ることはなく、ネット接続も要らない。
 
-モデル欄で **Claude Haiku 5.5** を選ぶと、手元の `claude` CLI（Claude Code、`claude -p`）を
+モデル欄で **Claude Haiku** を選ぶと、手元の `claude` CLI（Claude Code、`claude -p`）を
 通して Claude のサブスクで翻訳することもできる。こちらは**文章が Anthropic に送られる**。
 
 ## デモ
@@ -61,7 +61,7 @@ Windows 版は未検証のままで、分かっている穴もある。
 - 言語 15 種＋入れ替え、日本語訳の文体（です・ます / だ・である）、モデルのサイズ切り替え
   （0.8B / 2B / 8B / 31B）
 - **完全オンデバイスの翻訳**（PLaMo 3 Translate）。API キーもアカウントも要らない
-- **Claude Code 経由の Claude Haiku 5.5** も選べる（こちらは文章を Anthropic に送る）
+- **Claude Code 経由の Claude Haiku** も選べる（こちらは文章を Anthropic に送る）
 - **ストリーミング表示**・結果のその場編集・自動コピー
 - **更新の通知と、いざというときの停止**（[自動更新はしない](docs/updates.md)）
 

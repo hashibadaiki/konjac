@@ -150,7 +150,7 @@ const DEFAULT_MODEL = "0.8b";
  * what translates this.
  */
 const CLAUDE_CHOICE = "claude";
-const CLAUDE_NAME = "Claude Haiku 5.5";
+const CLAUDE_NAME = "Claude Haiku";
 
 const LANGUAGE_NAMES: Record<string, string> = {
   ja: "日本語",
@@ -1352,6 +1352,7 @@ el.btnClaudeDocs.addEventListener("click", () => invoke("open_setup_docs"));
 // clickable; ✕ hides it outright and leaves the tray icon as the way back.
 el.btnMinimize.addEventListener("click", () => appWindow.minimize());
 el.btnClose.addEventListener("click", () => appWindow.hide());
+if (IS_MAC) el.btnHome.before(el.btnClose, el.btnMinimize);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
