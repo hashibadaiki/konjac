@@ -25,12 +25,6 @@
     </header>
 
     <main class="pane" id="pane-translate">
-      <p class="note note--warn hidden" id="api-key-warning">
-        <code>ANTHROPIC_API_KEY</code> が設定されています。この状態の Claude Code は
-        サブスクではなく <strong>API キー側に課金</strong>します。サブスクで使うなら、
-        この変数が無い環境からアプリを起動してください。
-      </p>
-
       <!--
         A newer release exists. Says so and links to it; nothing is downloaded
         or installed on the user's behalf — see `update.rs` for why not.
@@ -75,8 +69,8 @@
       </div>
 
       <div class="langbar">
-        <select id="tone" aria-label="文体"></select>
-        <select id="model" aria-label="モデル" title="翻訳に使うモデル"></select>
+        <select id="tone" aria-label="文体" title="訳文の文体（翻訳先が日本語のときだけ効く）"></select>
+        <select id="model" aria-label="モデル" title="翻訳に使う PLaMo 3 Translate のサイズ"></select>
       </div>
 
       <textarea
@@ -86,11 +80,6 @@
         spellcheck="false"
       ></textarea>
 
-      <p class="overflow hidden" id="input-overflow" role="status" aria-live="polite">
-        <span class="overflow__count" id="input-overflow-count"></span>
-        <span id="input-overflow-note"></span>
-      </p>
-
       <!--
         Why a gesture filled the box and then stopped. The status line next to
         the 翻訳 button used to be the whole of this, and it is the wrong place
@@ -99,8 +88,8 @@
         which is the opposite of what it says.
       -->
       <p class="note hidden" id="confirm-hint" role="status" aria-live="polite">
-        クリップボード監視なので、いまの 2 回がキー操作だったのか他のアプリの書き込みだったのか区別できない。勝手に送らずここで止めてある —
-        <strong><span id="confirm-hint-key">⌘Enter</span></strong> か「翻訳」で送る。
+        クリップボード監視なので、いまの 2 回がキー操作だったのか他のアプリの書き込みだったのか区別できない。勝手に訳さずここで止めてある —
+        <strong><span id="confirm-hint-key">⌘Enter</span></strong> か「翻訳」で訳す。
       </p>
 
       <div class="actions">
@@ -129,39 +118,44 @@
     </main>
 
     <!--
-      Stands in for the translate pane whenever the CLI cannot translate: not
-      installed, not on a path we can find, or too old for the flags this app
-      passes. The wording is filled in from the live probe, because "missing"
-      and "too old" need different instructions.
+      Stands in for the translate pane while the selected model is not on disk.
+      Nothing ships with the app: the weights are downloaded once, here, and
+      after that translation never touches the network. The size picker is
+      repeated here so that someone who would rather not fetch 19 GB can pick a
+      smaller one without going looking for the translate pane's dropdown.
     -->
     <section class="pane pane--setup hidden" id="pane-setup">
-      <h2 class="setup__head" id="setup-head">翻訳の接続設定が必要です</h2>
-      <p class="note" id="setup-lead"></p>
+      <h2 class="setup__head">翻訳モデルをダウンロード</h2>
+      <p class="note">
+        翻訳は Preferred Networks の <strong>PLaMo 3 Translate</strong> をこの端末の中で動かして行う。
+        使うには、最初に一度だけモデルをダウンロードする（Hugging Face から取得）。
+        ダウンロード後は<strong>ネットに繋がっていなくても翻訳でき、文章はどこにも送られない</strong>。
+      </p>
 
-      <ol class="setup__steps" id="setup-steps">
-        <li>
-          <p id="setup-step-install">Claude Code をインストールする</p>
-          <div class="setup__cmd">
-            <code id="setup-command">npm install -g @anthropic-ai/claude-code</code>
-            <button class="btn btn--tiny" id="btn-setup-copy" title="コマンドをコピー">コピー</button>
-          </div>
-        </li>
-        <li>
-          ターミナルで <code>claude</code> を実行し、サブスクのアカウントでログインする。
-          一度通せば、このアプリはその認証をそのまま使う（API キーは要らない）
-        </li>
-        <li>下の「再検出」を押す</li>
-      </ol>
+      <label class="field">
+        <span>モデル</span>
+        <select id="setup-model" aria-label="ダウンロードするモデル"></select>
+      </label>
+
+      <p class="note note--tip" id="setup-model-note"></p>
+
+      <div class="download hidden" id="setup-progress">
+        <progress id="setup-progress-bar" max="1" value="0"></progress>
+        <span class="download__label" id="setup-progress-label"></span>
+      </div>
 
       <div class="actions">
-        <button class="btn btn--primary" id="btn-setup-recheck">再検出</button>
-        <button class="btn" id="btn-setup-docs">手順を開く</button>
-        <button class="btn" id="btn-setup-settings">接続を設定</button>
+        <button class="btn btn--primary" id="btn-setup-download">ダウンロード</button>
+        <button class="btn hidden" id="btn-setup-cancel">中止</button>
+        <button class="btn" id="btn-setup-license">ライセンスを読む</button>
       </div>
 
       <p class="status status--block" id="setup-status"></p>
 
-      <p class="note note--tip hidden" id="setup-detail"></p>
+      <p class="note note--tip">
+        モデルの利用条件は <strong>PLaMo Community License</strong>。個人・研究・非商用の利用は登録なしで
+        使える。<strong>商用で使う場合は条件があるので、先にライセンスを確認すること。</strong>
+      </p>
     </section>
 
     <!--
@@ -213,9 +207,9 @@
 
       <p class="note note--warn">
         有効にすると、2 回目を検出したその瞬間に<strong>クリップボードの本文を読み</strong>、
-        選択中の翻訳経路（Google Cloud Translation または Claude Code）へ送って翻訳する。
+        入力欄に入れて翻訳する。翻訳はこの端末の中で行い、<strong>本文を外部へは送らない</strong>。
         それ以外のときは本文を見ない。パスワードなどをコピーした直後に誤検出が起きれば、
-        それも送られることになる。
+        それがウィンドウに表示されることになる。
       </p>
 
       <div class="actions">
@@ -230,47 +224,37 @@
 
     <section class="pane pane--settings hidden" id="pane-settings">
       <p class="note">
-        短い通常文は Google NMT で素早く翻訳し、文体指定・コードを含む文書・Google の失敗時は
-        手元の <code>claude</code> CLI に切り替える。<strong>変更はその場で保存される。</strong>
+        翻訳は PLaMo 3 Translate をこの端末の中で動かして行い、文章を外部へ送らない。
+        <strong>変更はその場で保存される。</strong>
       </p>
 
-      <h2 class="subhead">Google NMT（高速経路）</h2>
-
-      <label class="field field--row">
-        <input id="set-google-enabled" type="checkbox" />
-        <span>短い通常文は Google Cloud Translation NMT を先に使う</span>
-      </label>
-
-      <label class="field">
-        <span>Google Cloud Translation API キー</span>
-        <input
-          id="google-api-key"
-          type="password"
-          placeholder="AIza…"
-          autocomplete="new-password"
-          spellcheck="false"
-        />
-      </label>
-
-      <div class="actions">
-        <button class="btn" id="btn-google-save">API キーを保存</button>
-        <button class="btn btn--tiny" id="btn-google-delete">削除</button>
-        <span class="status" id="google-key-status">確認中…</span>
-      </div>
+      <h2 class="subhead">翻訳モデル</h2>
 
       <p class="note note--tip">
-        キーは <code>settings.json</code> ではなく macOS Keychain / Windows 資格情報マネージャーに保存する。
-        通常文（標準の文体・5,000字以内）だけが対象。文体指定、コード・URL付き、Google が5秒以内に
-        応答しない場合は Claude Code に切り替える。Google Cloud 側の利用料金は別に発生しうる。
-        API キーには Cloud Translation API だけの制限を付けること。
+        大きいほど訳は良くなるが、遅くなり、メモリを多く使う。使うモデルは翻訳画面の右上で選ぶ。
+        目安として、2B は M1 Max で 400 トークン（日本語で数百字）ほどの訳を約 4 秒で書く（PFN の計測）。
+        31B はファイルだけで 19 GB 近くあり、メモリに余裕のある Mac 向け。
       </p>
 
-      <h2 class="subhead">Claude Code（フォールバック）</h2>
+      <div class="models" id="model-list"></div>
 
-      <label class="field">
-        <span>claude 実行ファイル</span>
-        <input id="set-claude-bin" type="text" placeholder="claude（または絶対パス）" spellcheck="false" />
-      </label>
+      <div class="download hidden" id="settings-progress">
+        <progress id="settings-progress-bar" max="1" value="0"></progress>
+        <span class="download__label" id="settings-progress-label"></span>
+        <button class="btn btn--tiny" id="btn-settings-cancel">中止</button>
+      </div>
+
+      <p class="status status--block" id="models-status"></p>
+
+      <p class="note note--tip">
+        保存先: <code id="models-dir">—</code><br />
+        モデルは Preferred Networks の PLaMo 3 Translate（Q4_K_M の GGUF）。利用条件は
+        <strong>PLaMo Community License</strong> で、商用利用には条件がある。
+      </p>
+
+      <div class="actions">
+        <button class="btn" id="btn-license">ライセンスを読む</button>
+      </div>
 
       <h2 class="subhead">起動方法</h2>
 
@@ -289,20 +273,18 @@
       -->
       <div class="note note--warn hidden" id="consent-prompt">
         <p>
-          <strong>有効にすると、コピーした内容が外部の翻訳サービスへ送信されます。</strong>
+          <strong>有効にすると、コピーした内容をこのアプリが読み取ります。</strong>
         </p>
         <p>
           コピー 2 回を検出した瞬間に<strong>クリップボードの本文を読み取り</strong>、
-          Google NMT が設定済みなら <strong>Google Cloud Translation</strong>へ、対象外または失敗時は
-          <code>claude</code> CLI 経由で <strong>Anthropic</strong>へ送って翻訳する。
-          パスワード・アクセストークン・社内文書などがクリップボードに入っている状態で
-          誤検出が起きれば、それらが送られることになる。
+          この端末の中の翻訳モデルで翻訳する。<strong>本文を外部へ送ることはない</strong>。
+          ただしパスワード・アクセストークン・社内文書などがクリップボードに入っている状態で
+          誤検出が起きれば、それらがウィンドウに表示されることになる。
         </p>
         <p>
           読み取るのは 2 回目を検出したその瞬間だけで、それ以外のときは本文を見ない
           （常時見ているのは OS の「変更カウンタ」という数値だけ）。無効のあいだは
-          読み取りも送信も起きない。訳文も原文もこのアプリはディスクに保存しない。
-          送信後の扱いは Google Cloud または Claude Code のアカウント設定と各サービスのポリシーに従う。
+          読み取りは起きない。訳文も原文もこのアプリはディスクに保存しない。
         </p>
         <div class="actions">
           <button class="btn btn--primary" id="btn-consent-agree">同意して有効にする</button>
@@ -313,10 +295,8 @@
       <!-- Same facts, kept on screen while the feature is on, so "what does this
            send and when" is answerable after the one-time dialog is gone. -->
       <p class="note note--warn hidden" id="double-copy-privacy">
-        <strong>送信先:</strong> 2 回目を検出した瞬間にクリップボードの本文を読み、
-        Google NMT が設定済みなら Google Cloud Translation へ、対象外・失敗時は
-        <code>claude</code> CLI 経由で Anthropic に送って翻訳する。
-        チェックを外せば、読み取りも送信も止まる。
+        <strong>読み取り:</strong> 2 回目を検出した瞬間にクリップボードの本文を読み、
+        この端末の中で翻訳する。外部へは送らない。チェックを外せば、読み取りも止まる。
       </p>
 
       <p class="note note--tip hidden" id="double-copy-gesture">—</p>
@@ -329,7 +309,7 @@
       <p class="note note--tip hidden" id="clipboard-auto-note">
         既定はオフ。クリップボード監視は「誰が書いたか」が分からないので、音声入力ソフトなどの
         書き込みをコピー 2 回と取り違えることがある。オフのあいだは入力欄に入れるだけで止め、
-        送信は <strong>⌘/Ctrl+Enter か「翻訳」ボタン</strong>を押したときだけにする。
+        翻訳は <strong>⌘/Ctrl+Enter か「翻訳」ボタン</strong>を押したときだけにする。
         キーボード監視のときは ⌘C のキーそのものを見ていて取り違えようがないので、
         この設定に関わらず即翻訳する。
       </p>
@@ -411,16 +391,6 @@
         <span>翻訳結果を自動でクリップボードにコピー</span>
       </label>
 
-      <label class="field">
-        <span>応答が途切れてから中止するまで（秒。既定 30）</span>
-        <input id="set-timeout" type="number" min="5" max="600" step="5" />
-      </label>
-
-      <p class="note note--tip">
-        翻訳は届いた分から順に表示されるので、長文でも待ち時間は最初の 1 文字までで済む。
-        この設定は「全体で何秒まで」ではなく「何も届かない状態が何秒続いたら諦めるか」。
-      </p>
-
       <h2 class="subhead">バージョン</h2>
 
       <div class="diag">
@@ -445,28 +415,7 @@
         <span class="status" id="update-status"></span>
       </div>
 
-      <h2 class="subhead">Claude Code</h2>
-
-      <p class="note note--tip">
-        翻訳は手元の <code>claude</code> に投げている。ここで確かめるのは
-        <strong>見つかるか・オプションが揃っているか・ログイン済みか</strong>の 3 点で、
-        どこかに接続しにいくわけではない。
-      </p>
-
-      <div class="actions">
-        <button class="btn" id="btn-check">Claude Code を確認</button>
-        <span class="status" id="settings-status"></span>
-      </div>
-
-      <!--
-        Shown whenever the CLI is there but signed out. A paragraph rather than
-        the status line beside the button: that one is clipped to a single line,
-        and the two commands are the whole point of saying anything at all.
-      -->
-      <p class="note note--warn hidden" id="login-warning">
-        Claude Code にログインしていません。ターミナルで <code>claude</code> を起動し、
-        続けて <code>/login</code> を実行してください。
-      </p>
+      <p class="status status--block" id="settings-status"></p>
     </section>
 
     <script type="module" src="/src/main.ts"></script>

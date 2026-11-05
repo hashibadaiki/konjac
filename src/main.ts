@@ -13,9 +13,8 @@ import {
 // ---------------------------------------------------------------- types
 
 interface Settings {
-  google_translate_enabled: boolean;
-  claude_bin: string;
-  model: string;
+  /** `0.8b` / `2b` / `8b` / `31b` — see `models.rs`. */
+  model_size: string;
   source_lang: string;
   target_lang: string;
   tone: string;
@@ -23,7 +22,6 @@ interface Settings {
   double_copy_window_ms: number;
   clipboard_auto_translate: boolean;
   auto_copy_result: boolean;
-  timeout_secs: number;
   check_for_updates: boolean;
 }
 
@@ -38,16 +36,37 @@ interface Verdict {
 
 interface TranslateResult {
   text: string;
-  provider: "google" | "claude";
+  /** The model size that answered. */
   model: string;
-  elapsed_ms: number;
-  fallback_reason: string | null;
+  /** Language codes actually used; see `plamo::direction`. */
+  source: string | null;
+  target: string;
+  elapsedMs: number;
 }
 
-interface GoogleApiKeyStatus {
-  configured: boolean;
-  source: "environment" | "keychain" | "none";
-  canStore: boolean;
+/** One model size, as `model_statuses` reports it. */
+interface ModelStatus {
+  size: string;
+  label: string;
+  approxBytes: number;
+  installed: boolean;
+  bytes: number | null;
+  /** An interrupted download that the next one resumes. */
+  partialBytes: number | null;
+}
+
+interface ModelsReport {
+  models: ModelStatus[];
+  /** The size being downloaded right now, if any. */
+  downloading: string | null;
+  dir: string;
+}
+
+/** `model-download` events. */
+interface DownloadProgress {
+  size: string;
+  received: number;
+  total: number;
 }
 
 interface TriggerPayload {
@@ -60,18 +79,6 @@ interface TriggerPayload {
 interface DeltaPayload {
   id: number;
   text: string;
-}
-
-/** What `check_cli` reports about the `claude` it found. */
-interface CliStatus {
-  version: string;
-  path: string;
-  /** Non-empty means the CLI predates flags the app cannot translate without. */
-  missingFlags: string[];
-  streaming: boolean;
-  apiKeyInEnv: boolean;
-  /** `null` when the CLI is too old to be asked whether it has a session. */
-  loggedIn: boolean | null;
 }
 
 interface WatchStatus {
@@ -99,7 +106,6 @@ const LANGS: [string, string][] = [
   ["French", "Français"],
   ["German", "Deutsch"],
   ["Spanish", "Español"],
-  ["Portuguese", "Português"],
   ["Italian", "Italiano"],
   ["Russian", "Русский"],
   ["Vietnamese", "Tiếng Việt"],
@@ -108,60 +114,23 @@ const LANGS: [string, string][] = [
   ["Arabic", "العربية"],
 ];
 
-const TONES: [string, string][] = [
-  ["default", "標準"],
-  ["formal", "敬体・ビジネス"],
-  ["casual", "口語・カジュアル"],
-  ["technical", "技術文書"],
-];
-
-const MODEL_GROUPS: [string, [string, string][]][] = [
-  [
-    "エイリアス（常に最新）",
-    [
-      ["opus", "opus — 最高品質"],
-      ["sonnet", "sonnet — 品質と速度のバランス"],
-      ["haiku", "haiku — 最速・最安"],
-      ["fable", "fable — 最上位"],
-    ],
-  ],
-  [
-    "バージョン固定",
-    [
-      ["claude-opus-4-8", "claude-opus-4-8"],
-      ["claude-sonnet-4-6", "claude-sonnet-4-6"],
-      ["claude-haiku-4-5", "claude-haiku-4-5"],
-    ],
-  ],
-];
-
 /**
- * Only reached if the select somehow has no value — the Rust side applies the
- * same default to a blank model, and it is the authority (`settings.rs`).
+ * PLaMo 3 Translate takes a register for Japanese output and nothing else, so
+ * this is the whole of the choice — and it is greyed out for other targets.
  */
-const DEFAULT_MODEL = "sonnet";
+const TONES: [string, string][] = [
+  ["default", "文体: 自動"],
+  ["polite", "です・ます"],
+  ["plain", "だ・である"],
+];
 
-/*
- * Past a certain length the CLI stops returning the whole translation, and it
- * does so silently: the model runs into its output ceiling, and `result` comes
- * back holding only the tail of the document with no error attached. Measured
- * against this app's own invocation (English → Japanese), haiku loses the head
- * of the text somewhere between 72,000 and 80,000 source characters, and the
- * larger models at roughly twice that (144,000 clean, 160,000 truncated).
- *
- * These caps sit well under both, because the ceiling is not the only thing in
- * the way. Streaming turned `timeout_secs` into an idle timer, so a long run is
- * no longer cut off while it is still producing — but the wait is real either
- * way: about 25 seconds at 6,000 characters, 44 at 12,000, two and a half
- * minutes at 48,000. A translation nobody will sit through is not much better
- * than one that never arrives.
- */
-const HAIKU_CHAR_LIMIT = 10_000;
-const CHAR_LIMIT = 100_000;
+/** Only reached if the select somehow has no value; `settings.rs` has the same. */
+const DEFAULT_MODEL = "2b";
 
-/** Matches the aliases (`haiku`) and the pinned ids (`claude-haiku-4-5`) alike. */
-const charLimit = (model: string) =>
-  /haiku/i.test(model) ? HAIKU_CHAR_LIMIT : CHAR_LIMIT;
+const LANGUAGE_NAMES: Record<string, string> = {
+  ja: "日本語",
+  en: "英語",
+};
 
 const IS_MAC = navigator.userAgent.includes("Mac");
 const MOD_KEY = IS_MAC ? "⌘" : "Ctrl";
@@ -194,9 +163,6 @@ const el = {
   btnWelcomeEnable: $<HTMLButtonElement>("btn-welcome-enable"),
   btnWelcomeSkip: $<HTMLButtonElement>("btn-welcome-skip"),
 
-  apiKeyWarning: $<HTMLParagraphElement>("api-key-warning"),
-  loginWarning: $<HTMLParagraphElement>("login-warning"),
-
   updateBanner: $<HTMLDivElement>("update-banner"),
   updateBannerText: $<HTMLParagraphElement>("update-banner-text"),
   btnUpdateGet: $<HTMLButtonElement>("btn-update-get"),
@@ -214,16 +180,15 @@ const el = {
   btnBannerAccessibility: $<HTMLButtonElement>("btn-banner-accessibility"),
   btnBannerDismiss: $<HTMLButtonElement>("btn-banner-dismiss"),
 
-  setupHead: $<HTMLHeadingElement>("setup-head"),
-  setupLead: $<HTMLParagraphElement>("setup-lead"),
-  setupStepInstall: $<HTMLParagraphElement>("setup-step-install"),
-  setupCommand: $<HTMLElement>("setup-command"),
+  setupModel: $<HTMLSelectElement>("setup-model"),
+  setupModelNote: $<HTMLParagraphElement>("setup-model-note"),
+  setupProgress: $<HTMLDivElement>("setup-progress"),
+  setupProgressBar: $<HTMLProgressElement>("setup-progress-bar"),
+  setupProgressLabel: $<HTMLSpanElement>("setup-progress-label"),
   setupStatus: $<HTMLParagraphElement>("setup-status"),
-  setupDetail: $<HTMLParagraphElement>("setup-detail"),
-  btnSetupCopy: $<HTMLButtonElement>("btn-setup-copy"),
-  btnSetupRecheck: $<HTMLButtonElement>("btn-setup-recheck"),
-  btnSetupDocs: $<HTMLButtonElement>("btn-setup-docs"),
-  btnSetupSettings: $<HTMLButtonElement>("btn-setup-settings"),
+  btnSetupDownload: $<HTMLButtonElement>("btn-setup-download"),
+  btnSetupCancel: $<HTMLButtonElement>("btn-setup-cancel"),
+  btnSetupLicense: $<HTMLButtonElement>("btn-setup-license"),
 
   sourceLang: $<HTMLSelectElement>("source-lang"),
   targetLang: $<HTMLSelectElement>("target-lang"),
@@ -232,9 +197,6 @@ const el = {
   btnSwap: $<HTMLButtonElement>("btn-swap"),
 
   input: $<HTMLTextAreaElement>("input"),
-  inputOverflow: $<HTMLParagraphElement>("input-overflow"),
-  inputOverflowCount: $<HTMLSpanElement>("input-overflow-count"),
-  inputOverflowNote: $<HTMLSpanElement>("input-overflow-note"),
   confirmHint: $<HTMLParagraphElement>("confirm-hint"),
   confirmHintKey: $<HTMLSpanElement>("confirm-hint-key"),
   output: $<HTMLTextAreaElement>("output"),
@@ -247,12 +209,14 @@ const el = {
   btnTranslate: $<HTMLButtonElement>("btn-translate"),
   btnCopy: $<HTMLButtonElement>("btn-copy"),
 
-  setGoogleEnabled: $<HTMLInputElement>("set-google-enabled"),
-  googleApiKey: $<HTMLInputElement>("google-api-key"),
-  btnGoogleSave: $<HTMLButtonElement>("btn-google-save"),
-  btnGoogleDelete: $<HTMLButtonElement>("btn-google-delete"),
-  googleKeyStatus: $<HTMLSpanElement>("google-key-status"),
-  setClaudeBin: $<HTMLInputElement>("set-claude-bin"),
+  modelList: $<HTMLDivElement>("model-list"),
+  settingsProgress: $<HTMLDivElement>("settings-progress"),
+  settingsProgressBar: $<HTMLProgressElement>("settings-progress-bar"),
+  settingsProgressLabel: $<HTMLSpanElement>("settings-progress-label"),
+  btnSettingsCancel: $<HTMLButtonElement>("btn-settings-cancel"),
+  modelsStatus: $<HTMLParagraphElement>("models-status"),
+  modelsDir: $<HTMLElement>("models-dir"),
+  btnLicense: $<HTMLButtonElement>("btn-license"),
   setDoubleCopy: $<HTMLInputElement>("set-double-copy"),
   consentPrompt: $<HTMLDivElement>("consent-prompt"),
   btnConsentAgree: $<HTMLButtonElement>("btn-consent-agree"),
@@ -278,19 +242,25 @@ const el = {
   diagDoubles: $<HTMLSpanElement>("diag-doubles"),
   diagHint: $<HTMLParagraphElement>("diag-hint"),
   setAutoCopy: $<HTMLInputElement>("set-auto-copy"),
-  setTimeout: $<HTMLInputElement>("set-timeout"),
   appVersion: $<HTMLSpanElement>("app-version"),
   setUpdateCheck: $<HTMLInputElement>("set-update-check"),
   btnCheckUpdate: $<HTMLButtonElement>("btn-check-update"),
   updateStatus: $<HTMLSpanElement>("update-status"),
-  btnCheck: $<HTMLButtonElement>("btn-check"),
-  settingsStatus: $<HTMLSpanElement>("settings-status"),
+  settingsStatus: $<HTMLParagraphElement>("settings-status"),
 };
 
 // ---------------------------------------------------------------- state
 
 let settings: Settings;
-let googleKeyStatus: GoogleApiKeyStatus | null = null;
+/** What is on disk, from the last `model_statuses`. */
+let modelsReport: ModelsReport | null = null;
+/** The latest progress of the download in flight, if one is. */
+let downloadProgress: DownloadProgress | null = null;
+/**
+ * The model whose delete button has been pressed once. Deleting gigabytes is
+ * not something to do on a single misclick, so the button asks again.
+ */
+let deleteArmed: string | null = null;
 let busy = false;
 let doubleCopySupported = false;
 /**
@@ -350,34 +320,6 @@ function fillSelect(select: HTMLSelectElement, options: [string, string][]) {
   );
 }
 
-function fillGroupedSelect(
-  select: HTMLSelectElement,
-  groups: [string, [string, string][]][],
-) {
-  select.replaceChildren(
-    ...groups.map(([groupLabel, options]) => {
-      const group = document.createElement("optgroup");
-      group.label = groupLabel;
-      group.append(...options.map(([value, label]) => new Option(label, value)));
-      return group;
-    }),
-  );
-}
-
-/** Keep a saved value selectable even if it predates the current option list. */
-function selectWithFallback(select: HTMLSelectElement, value: string) {
-  const known = Array.from(select.options).some(
-    (option) => option.value === value,
-  );
-  if (!known && value) {
-    const group = document.createElement("optgroup");
-    group.label = "保存済み";
-    group.append(new Option(value, value));
-    select.append(group);
-  }
-  select.value = value;
-}
-
 function setStatus(
   node: HTMLElement,
   message: string,
@@ -407,9 +349,9 @@ document.addEventListener("animationend", (event) => {
 let elapsedTimer: number | undefined;
 
 /**
- * Nothing has arrived yet at this point — the CLI spends a couple of seconds on
- * process startup before the model says a word — so the wait needs something
- * that visibly moves rather than a static word: a spinner, which model is being
+ * Nothing has arrived yet at this point — the first translation after launch
+ * also waits for the model to be read in — so the wait needs something that
+ * visibly moves rather than a static word: a spinner, which model is being
  * asked, and the seconds spent so far.
  */
 function setBusy(next: boolean) {
@@ -426,9 +368,7 @@ function setBusy(next: boolean) {
   elapsedTimer = undefined;
   if (!next) return;
 
-  el.loadingLabel.textContent = googleFastPathSelected()
-    ? "Google NMT で翻訳しています…"
-    : `${el.model.value} で翻訳しています…`;
+  el.loadingLabel.textContent = `${modelName(el.model.value)} で翻訳しています…`;
   const started = performance.now();
   const tick = () => {
     const seconds = (performance.now() - started) / 1000;
@@ -464,36 +404,19 @@ function setConfirmHint(show: boolean) {
   if (show) jiggle(el.btnTranslate);
 }
 
+/** How a model is named on screen. */
+const modelName = (size: string) => `PLaMo 3 ${size.toUpperCase()}`;
+
 /**
- * Says nothing until the text is actually over the limit for the model that is
- * selected right now — so it has to be re-run when the model changes, not only
- * when the text does.
+ * The model only takes a register for Japanese output, so the dropdown is
+ * greyed out for anything else rather than offering a choice that does nothing.
  */
-function syncOverflow() {
-  const model = el.model.value;
-  const limit = charLimit(model);
-  const count = el.input.value.length;
-
-  el.inputOverflow.classList.toggle("hidden", count <= limit);
-  if (count <= limit) return;
-
-  el.inputOverflowCount.textContent = `${count.toLocaleString()} / ${limit.toLocaleString()} 字`;
-  el.inputOverflowNote.textContent = ` — ${model} の上限を超えています。長すぎると訳文の先頭が欠けたまま返ることがあります。`;
-}
-
-/** Mirrors the Rust eligibility check so the loading label names the route. */
-function googleFastPathSelected() {
-  const text = el.input.value.trim();
-  return (
-    settings?.google_translate_enabled &&
-    googleKeyStatus?.configured &&
-    el.tone.value === "default" &&
-    Array.from(text).length <= 5_000 &&
-    !text.includes("`") &&
-    !text.includes("~~~") &&
-    !text.includes("http://") &&
-    !text.includes("https://")
-  );
+function syncTone() {
+  const japanese = el.targetLang.value === "Japanese";
+  el.tone.disabled = !japanese;
+  el.tone.title = japanese
+    ? "訳文の文体"
+    : "文体を選べるのは翻訳先が日本語のときだけ";
 }
 
 // ---------------------------------------------------------------- settings
@@ -513,21 +436,18 @@ function applySettingsToUi() {
   el.sourceLang.value = settings.source_lang;
   el.targetLang.value = settings.target_lang;
   el.tone.value = settings.tone;
-  selectWithFallback(el.model, settings.model);
+  el.model.value = settings.model_size;
+  el.setupModel.value = settings.model_size;
 
-  el.setGoogleEnabled.checked = settings.google_translate_enabled;
-  setFieldValue(el.setClaudeBin, settings.claude_bin);
   el.setDoubleCopy.checked = settings.double_copy_enabled;
   setFieldValue(el.setDoubleCopyWindow, String(settings.double_copy_window_ms));
   el.setClipboardAuto.checked = settings.clipboard_auto_translate;
   el.setAutoCopy.checked = settings.auto_copy_result;
-  setFieldValue(el.setTimeout, String(settings.timeout_secs));
   el.setUpdateCheck.checked = settings.check_for_updates;
 
   syncTriggerFields();
-  // The limit depends on the model, so a restored or swapped model can put the
-  // text that is already in the box over (or back under) the line.
-  syncOverflow();
+  syncTone();
+  renderModels();
 }
 
 function syncTriggerFields() {
@@ -659,9 +579,7 @@ function setDiagnosticsPolling(pane: Pane) {
 
 function readSettingsFromUi(): Settings {
   return {
-    google_translate_enabled: el.setGoogleEnabled.checked,
-    claude_bin: el.setClaudeBin.value.trim() || "claude",
-    model: el.model.value || DEFAULT_MODEL,
+    model_size: el.model.value || DEFAULT_MODEL,
     source_lang: el.sourceLang.value,
     target_lang: el.targetLang.value,
     tone: el.tone.value,
@@ -676,7 +594,6 @@ function readSettingsFromUi(): Settings {
     ),
     clipboard_auto_translate: el.setClipboardAuto.checked,
     auto_copy_result: el.setAutoCopy.checked,
-    timeout_secs: Math.min(600, Math.max(5, Number(el.setTimeout.value) || 30)),
     check_for_updates: el.setUpdateCheck.checked,
   };
 }
@@ -696,23 +613,11 @@ async function persist(next: Settings): Promise<void> {
  * looks exactly like a feature that has been turned on and is not working.
  */
 async function commitSettings() {
-  const previousBin = settings.claude_bin;
-  const previousGoogle = settings.google_translate_enabled;
   try {
     await persist(readSettingsFromUi());
     setStatus(el.settingsStatus, "保存しました", "ok");
   } catch (err) {
     setStatus(el.settingsStatus, String(err), "error");
-    return;
-  }
-  // A new path is the usual fix for a CLI that was not found, so the block is
-  // re-evaluated against it — but only when it is the path that moved, since
-  // probing spawns a process and every other field here saves without one.
-  if (
-    settings.claude_bin !== previousBin ||
-    settings.google_translate_enabled !== previousGoogle
-  ) {
-    await revalidate();
   }
 }
 
@@ -720,8 +625,8 @@ let saveTimer: number | undefined;
 
 /**
  * `delay` is what separates a checkbox from a text field: a tick is a finished
- * decision, whereas a half-typed path would otherwise be saved a character at a
- * time (and probed for, at that).
+ * decision, whereas a half-typed number would otherwise be saved a character
+ * at a time.
  */
 function scheduleSave(delay = 0) {
   window.clearTimeout(saveTimer);
@@ -738,7 +643,7 @@ async function persistChoice() {
     source_lang: el.sourceLang.value,
     target_lang: el.targetLang.value,
     tone: el.tone.value,
-    model: el.model.value || settings.model,
+    model_size: el.model.value || settings.model_size,
   });
 }
 
@@ -746,10 +651,10 @@ async function persistChoice() {
 
 async function translate(text: string) {
   const trimmed = text.trim();
-  // ⌘Enter is still live while the setup pane is up, and there is no route to ask.
+  // ⌘Enter is still live while the setup pane is up, and there is no model to ask.
   // A withdrawn build refuses here too: the pane is what says so, this is what
   // makes it true — including for the ⌘C ⌘C path, which never sees a pane.
-  if (!trimmed || busy || blocked || advisory) return;
+  if (!trimmed || busy || needsModel() || advisory) return;
 
   setBusy(true);
   // The spinner carries the "working on it"; a stale result underneath it would
@@ -780,16 +685,20 @@ async function translate(text: string) {
     // The box gives a little shake as the text drops in, so a result that
     // arrives while you are looking elsewhere still announces itself.
     jiggle(el.output);
+    // Japanese text with the target on Japanese went to English instead, and
+    // the status line is where that has to be said — the output box alone
+    // would read as the app ignoring the dropdown.
+    const flipped =
+      el.targetLang.value === "Japanese" && result.target !== "ja"
+        ? `（${LANGUAGE_NAMES[result.source ?? ""] ?? result.source} → ${
+            LANGUAGE_NAMES[result.target] ?? result.target
+          }）`
+        : "";
     setStatus(
       el.status,
-      `${result.provider === "google" ? "Google NMT" : result.model}${
-        result.fallback_reason ? "（Google から切替）" : ""
-      } · ${(result.elapsed_ms / 1000).toFixed(1)}s`,
+      `${modelName(result.model)}${flipped} · ${(result.elapsedMs / 1000).toFixed(1)}s`,
       "ok",
     );
-    // The compact status line names the switch; the full reason remains
-    // available without crowding the translation pane.
-    el.status.title = result.fallback_reason ?? "";
     if (settings.auto_copy_result) {
       await writeClipboard(result.text);
     }
@@ -819,28 +728,29 @@ function showPane(pane: Pane) {
     // Leaving the pane is an answer of sorts: the disclosure comes back the
     // next time the box is ticked, rather than sitting there half-answered.
     el.consentPrompt.classList.add("hidden");
-    el.setClaudeBin.focus();
+    deleteArmed = null;
+    void refreshModels();
   } else if (pane === "translate") {
     el.input.focus();
   }
 }
 
 /**
- * Where dismissing a pane lands. With no usable translation route the pane has
- * nothing to offer, so setup takes its place as the app's resting state — and a
- * withdrawn build has less to offer still, so the advisory outranks even that.
+ * Where dismissing a pane lands. With the selected model not downloaded the
+ * translate pane has nothing to offer, so the download pane takes its place as
+ * the app's resting state — and a withdrawn build has less to offer still, so
+ * the advisory outranks even that.
  *
- * The first-launch question sits above both of those but below the advisory: it
+ * The first-launch question sits above the download but below the advisory: it
  * is asked before the app has been used at all, and answering it is two clicks,
- * whereas installing Claude Code is a trip to a terminal that the answer does
- * not depend on.
+ * whereas the download can take a while and does not depend on the answer.
  */
 const homePane = (): Pane =>
   advisory
     ? "advisory"
     : firstRunPending
       ? "welcome"
-      : blocked
+      : needsModel()
         ? "setup"
         : "translate";
 
@@ -855,161 +765,199 @@ async function answerFirstRun() {
   await invoke("mark_first_run_answered").catch(() => {});
 }
 
-// ------------------------------------------------------------------ cli state
+// ------------------------------------------------------------------ models
 
-/** Why the Claude route is impossible right now, or null when it is fine. */
-interface CliBlock {
-  head: string;
-  lead: string;
-  /** Raw detail — a path, an error string — kept out of the main wording. */
-  detail: string;
-  /** Whether installing is the fix, as opposed to updating. */
-  install: boolean;
-}
+const GB = 1_000_000_000;
+const formatBytes = (bytes: number) =>
+  bytes >= GB ? `${(bytes / GB).toFixed(1)} GB` : `${Math.round(bytes / 1_000_000)} MB`;
 
-let blocked: CliBlock | null = null;
-
-/** The last answer `check_cli` gave, for the bits `CliBlock` does not carry. */
-let cliStatus: CliStatus | null = null;
+const statusOf = (size: string) =>
+  modelsReport?.models.find((model) => model.size === size);
 
 /**
- * Probes the CLI and works out whether it can translate. Only updates state and
- * wording; moving to a pane is the caller's decision, so re-checking from the
- * settings pane does not yank the user out of it.
+ * Whether the selected model has yet to be downloaded. Unknown — the report
+ * has not come back — counts as fine, so a slow first answer does not flash
+ * the download pane at someone who has the model already.
  */
-async function probeCli(candidate?: Settings): Promise<CliBlock | null> {
-  let status: CliStatus;
+const needsModel = () =>
+  !!modelsReport && !statusOf(settings.model_size)?.installed;
+
+/** The dropdown wording: the size, what it is for, and whether it is here. */
+function modelOptionLabel(model: ModelStatus) {
+  if (model.installed) return model.label;
+  return `${model.label}（未ダウンロード・約 ${formatBytes(model.approxBytes)}）`;
+}
+
+function progressText(progress: DownloadProgress) {
+  const ratio = progress.total ? progress.received / progress.total : 0;
+  return `${modelName(progress.size)} · ${formatBytes(progress.received)} / ${formatBytes(
+    progress.total,
+  )}（${Math.floor(ratio * 100)}%）`;
+}
+
+/**
+ * Repaints everything that depends on what is on disk: both dropdowns, the
+ * settings pane's list, the download pane, and the titlebar badge.
+ */
+function renderModels() {
+  const report = modelsReport;
+  if (!report) return;
+
+  for (const select of [el.model, el.setupModel]) {
+    select.replaceChildren(
+      ...report.models.map((model) => new Option(modelOptionLabel(model), model.size)),
+    );
+    select.value = settings.model_size;
+  }
+
+  const selected = statusOf(settings.model_size);
+  el.backendBadge.textContent = selected?.installed
+    ? modelName(settings.model_size)
+    : `${modelName(settings.model_size)} · 未ダウンロード`;
+
+  const downloading = report.downloading;
+  const progress = downloadProgress;
+
+  // Download pane: always about the selected model.
+  if (selected) {
+    el.setupModelNote.textContent = selected.partialBytes
+      ? `前回のダウンロードが ${formatBytes(
+          selected.partialBytes,
+        )} まで済んでいるので、続きから再開する。`
+      : `ダウンロードは約 ${formatBytes(
+          selected.approxBytes,
+        )}。大きいほど訳は良いが、遅く、メモリを多く使う。`;
+  }
+  const selectedDownloading = downloading === settings.model_size;
+  el.btnSetupDownload.classList.toggle("hidden", selectedDownloading);
+  el.btnSetupDownload.disabled = !!downloading;
+  el.btnSetupCancel.classList.toggle("hidden", !selectedDownloading);
+  el.setupModel.disabled = !!downloading;
+  el.setupProgress.classList.toggle("hidden", !selectedDownloading || !progress);
+
+  // Settings pane: one row per size.
+  el.modelsDir.textContent = report.dir;
+  el.modelList.replaceChildren(
+    ...report.models.map((model) => {
+      const row = document.createElement("div");
+      row.className = "models__row";
+
+      const name = document.createElement("span");
+      name.className = "models__name";
+      name.classList.toggle("is-selected", model.size === settings.model_size);
+      name.textContent = model.label;
+
+      const state = document.createElement("span");
+      state.className = "models__state";
+      if (model.installed) {
+        state.textContent = `ダウンロード済み・${formatBytes(model.bytes ?? 0)}`;
+        state.classList.add("is-ok");
+      } else if (downloading === model.size) {
+        state.textContent = "ダウンロード中…";
+      } else if (model.partialBytes) {
+        state.textContent = `途中まで（${formatBytes(model.partialBytes)}）`;
+      } else {
+        state.textContent = `約 ${formatBytes(model.approxBytes)}`;
+      }
+
+      const button = document.createElement("button");
+      button.className = "btn btn--tiny";
+      if (model.installed) {
+        const armed = deleteArmed === model.size;
+        button.textContent = armed ? "本当に削除" : "削除";
+        button.classList.toggle("btn--danger", armed);
+        button.addEventListener("click", () => void deleteModel(model.size));
+      } else {
+        button.textContent = model.partialBytes ? "再開" : "ダウンロード";
+        button.disabled = !!downloading;
+        button.addEventListener("click", () => void downloadModel(model.size));
+      }
+
+      row.append(name, state, button);
+      return row;
+    }),
+  );
+  el.settingsProgress.classList.toggle("hidden", !downloading || !progress);
+
+  if (progress) {
+    const ratio = progress.total ? progress.received / progress.total : 0;
+    for (const bar of [el.setupProgressBar, el.settingsProgressBar]) bar.value = ratio;
+    const text = progressText(progress);
+    el.setupProgressLabel.textContent = text;
+    el.settingsProgressLabel.textContent = text;
+  }
+}
+
+async function refreshModels() {
   try {
-    status = await invoke<CliStatus>("check_cli", {
-      settings: candidate ?? settings,
-    });
-    cliStatus = status;
+    modelsReport = await invoke<ModelsReport>("model_statuses");
   } catch (err) {
-    cliStatus = null;
-    el.backendBadge.textContent = "claude 未検出";
-    el.apiKeyWarning.classList.add("hidden");
-    el.loginWarning.classList.add("hidden");
-    return {
-      head: "翻訳の接続設定が必要です",
-      lead:
-        "Google Cloud Translation API キーを設定するか、Claude Code を入れて" +
-        "ログインしてください。両方あれば Google を高速経路、Claude をフォールバックに使います。",
-      detail: String(err),
-      install: true,
-    };
-  }
-
-  el.apiKeyWarning.classList.toggle("hidden", !status.apiKeyInEnv);
-  // `null` is "could not ask", which is not the same as "signed out" and must
-  // not put a warning on screen the user cannot act on.
-  el.loginWarning.classList.toggle("hidden", status.loggedIn !== false);
-
-  if (status.missingFlags.length) {
-    el.backendBadge.textContent = `claude ${status.version} は古い`;
-    return {
-      head: "Claude Code が古すぎます",
-      lead:
-        `見つかった claude ${status.version} には、このアプリが渡している` +
-        `オプションがありません（${status.missingFlags.join(" ")}）。` +
-        "更新すれば使えます。",
-      detail: status.path,
-      install: false,
-    };
-  }
-
-  // Signed out is worth saying in the title bar too: the CLI is there and new
-  // enough, so every other signal on screen reads as ready.
-  el.backendBadge.textContent =
-    status.loggedIn === false
-      ? `claude ${status.version} · 未ログイン`
-      : `claude ${status.version}`;
-  return null;
-}
-
-function renderSetup() {
-  if (!blocked) return;
-  el.setupHead.textContent = blocked.head;
-  el.setupLead.textContent = blocked.lead;
-  el.setupStepInstall.textContent = blocked.install
-    ? "Claude Code をインストールする"
-    : "Claude Code を更新する";
-  el.setupDetail.textContent = blocked.detail;
-  el.setupDetail.classList.toggle("hidden", !blocked.detail);
-}
-
-/** Re-probes and repaints the setup pane, leaving the current pane alone. */
-async function revalidate(candidate?: Settings): Promise<CliBlock | null> {
-  const next = candidate ?? settings;
-  const cliProblem = await probeCli(next);
-  const googleReady =
-    next.google_translate_enabled && !!googleKeyStatus?.configured;
-  // Google is a usable primary route on its own. Claude remains valuable as a
-  // fallback, but its absence must not replace a working translate pane with
-  // the setup screen.
-  blocked = googleReady ? null : cliProblem;
-  if (googleReady) {
-    el.backendBadge.textContent = cliProblem
-      ? "Google NMT"
-      : `Google NMT → claude ${cliStatus?.version ?? "?"}`;
-  }
-  renderSetup();
-  return cliProblem;
-}
-
-/**
- * What the "Claude Code を確認" button reports.
- *
- * The version used to be the whole answer, which is how this could say
- * everything was fine while the session behind it had expired — the failure
- * that sends someone to press it in the first place. `loggedIn` is the part
- * worth pressing for; `null` means the CLI predates `claude auth status`, and
- * claiming either way would be worse than saying nothing.
- */
-async function checkCli() {
-  setStatus(el.settingsStatus, "確認中…");
-  const problem = await revalidate(readSettingsFromUi());
-  if (problem) {
-    setStatus(el.settingsStatus, `${problem.head} — ${problem.detail}`, "error");
+    setStatus(el.modelsStatus, String(err), "error");
     return;
   }
-
-  const found = `claude ${cliStatus?.version ?? "?"}`;
-  if (cliStatus?.loggedIn === false) {
-    setStatus(el.settingsStatus, `${found} · ログインしていません`, "error");
-  } else if (cliStatus?.loggedIn) {
-    setStatus(el.settingsStatus, `${found} · ログイン済み`, "ok");
-  } else {
-    setStatus(el.settingsStatus, `${found} を検出`, "ok");
-  }
+  renderModels();
 }
 
-function renderGoogleKeyStatus() {
-  const status = googleKeyStatus;
-  if (!status?.configured) {
-    setStatus(el.googleKeyStatus, "未設定");
-  } else if (status.source === "environment") {
-    setStatus(
-      el.googleKeyStatus,
-      "環境変数 GOOGLE_TRANSLATE_API_KEY から設定済み",
-      "ok",
-    );
-  } else {
-    setStatus(el.googleKeyStatus, "OS の資格情報ストアに保存済み", "ok");
-  }
+/**
+ * Fetches a model. Both the download pane and the settings list come here, and
+ * both show the progress, since the download keeps going whichever is on
+ * screen.
+ */
+async function downloadModel(size: string) {
+  if (modelsReport?.downloading) return;
+  setStatus(el.setupStatus, "");
+  setStatus(el.modelsStatus, "");
+  downloadProgress = null;
+  // Marked as running before the first progress event arrives, so the buttons
+  // do not stay pressable while Hugging Face is still being asked.
+  if (modelsReport) modelsReport.downloading = size;
+  renderModels();
 
-  el.googleApiKey.disabled = status?.canStore === false;
-  el.btnGoogleSave.disabled = status?.canStore === false;
-  el.btnGoogleDelete.disabled = status?.source !== "keychain";
-}
-
-async function refreshGoogleKeyStatus() {
   try {
-    googleKeyStatus = await invoke<GoogleApiKeyStatus>("google_api_key_status");
-    renderGoogleKeyStatus();
+    await invoke("download_model", { size });
+    const done = `${modelName(size)} をダウンロードしました`;
+    setStatus(el.setupStatus, done, "ok");
+    setStatus(el.modelsStatus, done, "ok");
   } catch (err) {
-    googleKeyStatus = null;
-    setStatus(el.googleKeyStatus, String(err), "error");
+    setStatus(el.setupStatus, String(err), "error");
+    setStatus(el.modelsStatus, String(err), "error");
+  } finally {
+    downloadProgress = null;
+    await refreshModels();
   }
+
+  // The download pane was only ever in the way of the translate pane.
+  if (!el.paneSetup.classList.contains("hidden") && !needsModel()) {
+    showPane(homePane());
+  }
+}
+
+async function deleteModel(size: string) {
+  if (deleteArmed !== size) {
+    deleteArmed = size;
+    renderModels();
+    return;
+  }
+  deleteArmed = null;
+  try {
+    await invoke("delete_model", { size });
+    setStatus(el.modelsStatus, `${modelName(size)} を削除しました`, "ok");
+  } catch (err) {
+    setStatus(el.modelsStatus, String(err), "error");
+  }
+  await refreshModels();
+}
+
+/** A size picked in either dropdown is saved, and may need downloading. */
+async function chooseModel(size: string) {
+  deleteArmed = null;
+  el.model.value = size;
+  await persistChoice();
+  // Landing on a model that is not here yet sends you to fetch it; picking one
+  // that is, from the download pane, sends you back.
+  const onTranslate = !el.paneTranslate.classList.contains("hidden");
+  const onSetup = !el.paneSetup.classList.contains("hidden");
+  if (onTranslate || onSetup) showPane(homePane());
 }
 
 // ------------------------------------------------------------------ updates
@@ -1111,12 +1059,10 @@ async function runUpdateCheck(manual = false) {
 fillSelect(el.sourceLang, LANGS);
 fillSelect(el.targetLang, LANGS.filter(([value]) => value !== "auto"));
 fillSelect(el.tone, TONES);
-fillGroupedSelect(el.model, MODEL_GROUPS);
 
 el.btnTranslate.addEventListener("click", () => translate(el.input.value));
 
 el.input.addEventListener("input", () => {
-  syncOverflow();
   // The note is about the text the gesture put here; typing over it makes it
   // someone else's text, and the note stale.
   setConfirmHint(false);
@@ -1138,16 +1084,20 @@ el.btnSwap.addEventListener("click", async () => {
   if (from !== "auto") el.targetLang.value = from;
   el.sourceLang.value = to;
   jiggle(el.btnSwap);
+  syncTone();
   await persistChoice();
 });
 
-for (const control of [el.sourceLang, el.targetLang, el.tone, el.model]) {
+for (const control of [el.sourceLang, el.targetLang, el.tone]) {
   control.addEventListener("change", persistChoice);
 }
 
 // persistChoice repaints this too, but only after a round trip to disk — the
-// warning should track the dropdown, not the save.
-el.model.addEventListener("change", syncOverflow);
+// dropdown should follow the target as it is picked, not the save.
+el.targetLang.addEventListener("change", syncTone);
+
+el.model.addEventListener("change", () => void chooseModel(el.model.value));
+el.setupModel.addEventListener("change", () => void chooseModel(el.setupModel.value));
 
 /**
  * Both places that offer the permission — the banner on the main pane and the
@@ -1214,7 +1164,6 @@ el.btnConsentDecline.addEventListener("click", () => {
 // fields wait for the typing to stop, and again when the field is left, so
 // tabbing away or pressing Enter does not sit on an unsaved keystroke.
 for (const box of [
-  el.setGoogleEnabled,
   el.setClipboardAuto,
   el.setAutoCopy,
   el.setUpdateCheck,
@@ -1222,39 +1171,7 @@ for (const box of [
   box.addEventListener("change", () => scheduleSave());
 }
 
-el.btnGoogleSave.addEventListener("click", async () => {
-  const apiKey = el.googleApiKey.value.trim();
-  if (!apiKey) {
-    setStatus(el.googleKeyStatus, "API キーを入力してください", "error");
-    return;
-  }
-
-  el.btnGoogleSave.disabled = true;
-  try {
-    googleKeyStatus = await invoke<GoogleApiKeyStatus>("save_google_api_key", {
-      apiKey,
-    });
-    el.googleApiKey.value = "";
-    renderGoogleKeyStatus();
-    await revalidate();
-  } catch (err) {
-    setStatus(el.googleKeyStatus, String(err), "error");
-  } finally {
-    el.btnGoogleSave.disabled = googleKeyStatus?.canStore === false;
-  }
-});
-
-el.btnGoogleDelete.addEventListener("click", async () => {
-  try {
-    googleKeyStatus = await invoke<GoogleApiKeyStatus>("delete_google_api_key");
-    renderGoogleKeyStatus();
-    await revalidate();
-  } catch (err) {
-    setStatus(el.googleKeyStatus, String(err), "error");
-  }
-});
-
-for (const field of [el.setClaudeBin, el.setDoubleCopyWindow, el.setTimeout]) {
+for (const field of [el.setDoubleCopyWindow]) {
   field.addEventListener("input", () => scheduleSave(TYPING_SETTLE_MS));
   field.addEventListener("change", () => scheduleSave());
   field.addEventListener("blur", () => scheduleSave());
@@ -1289,17 +1206,6 @@ el.btnAdvisoryDetails.addEventListener("click", async () => {
 
 el.btnCheckUpdate.addEventListener("click", () => runUpdateCheck(true));
 
-el.btnSetupRecheck.addEventListener("click", async () => {
-  setStatus(el.setupStatus, "確認中…");
-  const problem = await revalidate();
-  if (problem) {
-    setStatus(el.setupStatus, "まだ見つかりません。", "error");
-  } else {
-    setStatus(el.setupStatus, "");
-    showPane(homePane());
-  }
-});
-
 // The one place the gesture can be turned on without the settings pane. It does
 // the whole of it — consent, the flag, and the save — because a first-launch
 // question that answers "yes" by sending you somewhere else to finish is not an
@@ -1324,19 +1230,19 @@ el.btnWelcomeSkip.addEventListener("click", async () => {
   showPane(homePane());
 });
 
-el.btnSetupDocs.addEventListener("click", () => invoke("open_setup_docs"));
+el.btnSetupDownload.addEventListener("click", () =>
+  downloadModel(settings.model_size),
+);
+// Stopping keeps what has arrived; the next press resumes from there.
+el.btnSetupCancel.addEventListener("click", () => invoke("cancel_download"));
+el.btnSettingsCancel.addEventListener("click", () => invoke("cancel_download"));
+el.btnSetupLicense.addEventListener("click", () => invoke("open_model_license"));
+el.btnLicense.addEventListener("click", () => invoke("open_model_license"));
 
-el.btnSetupSettings.addEventListener("click", () => showPane("settings"));
-
-el.btnSetupCopy.addEventListener("click", async () => {
-  await writeClipboard(el.setupCommand.textContent ?? "");
-  setStatus(el.setupStatus, "コマンドをコピーしました", "ok");
-});
 // Minimize parks the window in the taskbar/Dock, where it is still visible and
 // clickable; ✕ hides it outright and leaves the tray icon as the way back.
 el.btnMinimize.addEventListener("click", () => appWindow.minimize());
 el.btnClose.addEventListener("click", () => appWindow.hide());
-el.btnCheck.addEventListener("click", checkCli);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
@@ -1376,6 +1282,11 @@ listen("watch-source-changed", () => {
   void refreshDiagnostics();
 });
 
+listen<DownloadProgress>("model-download", (event) => {
+  downloadProgress = event.payload;
+  renderModels();
+});
+
 // Fired by the Rust side when the ⌘C ⌘C gesture is detected.
 //
 // Whether that is an explicit "translate this" depends on which detector saw
@@ -1386,8 +1297,8 @@ listen("watch-source-changed", () => {
 listen<TriggerPayload>("trigger-activated", async (event) => {
   // Answered or not, the previous gesture's note is not about this one.
   setConfirmHint(false);
-  // With no usable CLI the gesture still raises the window, but onto the setup
-  // pane — there is nothing to paste the clipboard into.
+  // With no model downloaded the gesture still raises the window, but onto the
+  // download pane — there is nothing to translate the clipboard with.
   showPane(homePane());
   // The window arrives unasked-for over whatever you were doing, so the slab
   // lands with a wobble rather than just appearing. True of the setup pane too.
@@ -1396,7 +1307,7 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   // a box it is not going to translate. The watcher is stood down when the
   // advisory lands, so in practice this only catches a gesture already in
   // flight when it did.
-  if (blocked || advisory) return;
+  if (needsModel() || advisory) return;
 
   el.input.focus();
   el.input.select();
@@ -1405,8 +1316,6 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   if (!text || !text.trim()) return;
 
   el.input.value = text;
-  // Assigning `value` fires no input event, so the warning has to be asked for.
-  syncOverflow();
 
   const confirmed =
     event.payload.source === "keyboard" || settings.clipboard_auto_translate;
@@ -1431,7 +1340,7 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
   el.welcomeGesture.textContent = COPY_KEY;
   el.confirmHintKey.textContent = RUN_KEY;
   settings = await invoke<Settings>("get_settings");
-  await refreshGoogleKeyStatus();
+  await refreshModels();
   applySettingsToUi();
 
   // Asked on the first launch only, and only where there is something to
@@ -1442,9 +1351,6 @@ listen<TriggerPayload>("trigger-activated", async (event) => {
     !clipboardConsent &&
     !(await invoke<boolean>("first_run_answered").catch(() => true));
 
-  // Two CLI probes have to come back before this resolves, so the window is
-  // already up and the badge reads "…" while it happens.
-  await revalidate();
   showPane(homePane());
 
   // Last, and deliberately not awaited: this one goes to the network, and the
