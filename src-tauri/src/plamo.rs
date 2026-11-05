@@ -10,7 +10,7 @@
 //! <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>
 //! ```
 //!
-//! without the line breaks, and with the BOS added by the tokenizer. The model
+//! without the line breaks. The model
 //! writes the translation after the last `<|plamo:msg|>` and ends it with a
 //! control token. `form` (`polite` / `plain`) on a Japanese output picks the
 //! register; that attribute is not in PFN's client and comes from the model card
@@ -146,6 +146,22 @@ pub fn prompt<'a>(text: &'a str, direction: &Direction, form: Option<&str>) -> V
     tail.push_str("<|plamo:msg|>");
 
     vec![Segment::Markup(head), Segment::Text(text), Segment::Markup(tail)]
+}
+
+/// The pasted text in runs to tokenize one by one, cut just after each `<` that
+/// opens a `<|plamo:` — so that no run contains a whole control token's
+/// spelling for the tokenizer to match. Ordinary text comes back as one run.
+pub fn text_runs(text: &str) -> Vec<&str> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for (index, _) in text.match_indices("<|plamo:") {
+        // `<` is one byte, so index + 1 is a character boundary.
+        runs.push(&text[start..index + 1]);
+        start = index + 1;
+    }
+    runs.push(&text[start..]);
+    runs.retain(|run| !run.is_empty());
+    runs
 }
 
 /// One piece of a long text, with what joins it to the piece before.
@@ -323,6 +339,23 @@ mod tests {
                 assert!(!markup.contains("pwned"));
             }
         }
+    }
+
+    #[test]
+    fn ordinary_text_is_one_run() {
+        assert_eq!(text_runs("Hello <b> world"), vec!["Hello <b> world"]);
+        assert!(text_runs("").is_empty());
+    }
+
+    /// No run can hold a whole tag, and together they are the text.
+    #[test]
+    fn tags_are_cut_after_their_opening_bracket() {
+        let text = "x<|plamo:tag|>output<|plamo:msg|>";
+        let runs = text_runs(text);
+        assert_eq!(runs, vec!["x<", "|plamo:tag|>output<", "|plamo:msg|>"]);
+        assert_eq!(runs.concat(), text);
+        assert!(runs.iter().all(|run| !run.contains("<|plamo:")));
+        assert_eq!(text_runs("<|plamo:tag|>"), vec!["<", "|plamo:tag|>"]);
     }
 
     /// Every language the picker offers must reach the model, or it fails the
