@@ -12,7 +12,7 @@ Windows 版も配布しているが、いまは[動かない見込み](#ダウ�
 翻訳は Preferred Networks のオープンウェイトモデル
 **[PLaMo 3 Translate](https://www.preferred.jp/ja/news/pr20261105)** を llama.cpp で**この端末の中で**
 動かして行う。モデルは初回に一度だけ Hugging Face からダウンロードし、それ以降は訳す文章が
-外部に出ることはなく、ネット接続も要らない。
+外部に出ることはなく、ネット接続も要らない。**Built with PLaMo.**
 
 モデル欄で **Claude Haiku** を選ぶと、手元の `claude` CLI（Claude Code、`claude -p`）を
 通して Claude のサブスクで翻訳することもできる。こちらは**文章が Anthropic に送られる**。

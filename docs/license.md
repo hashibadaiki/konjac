@@ -18,6 +18,8 @@ Rust エコシステムの慣例に合わせてある。依存ツリーは Tauri
 
 ## 翻訳モデル
 
+**Built with PLaMo.**
+
 翻訳に使う **PLaMo 3 Translate**（Preferred Networks）の重みは、このリポジトリにも配布物にも
 **含まれていない**。ユーザーがアプリの中から Hugging Face（`pfnet/plamo-3-translate-*-GGUF`）
 から自分でダウンロードする。上の MIT / Apache-2.0 は重みには及ばない。
