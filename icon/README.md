@@ -14,10 +14,10 @@
 `src-tauri/icons/` 以下は生成物なので、直接いじらずに作り直す:
 
 ```sh
-npm i -D playwright && npx playwright install chromium
+pnpm add -D playwright && pnpm exec playwright install chromium
 
 node icon/build.mjs                  # SVG と PNG（1024、透過）を両案ぶん書き出す
-npm run tauri icon icon/app-icon.png
+pnpm tauri icon icon/app-icon.png
 rm -rf src-tauri/icons/android src-tauri/icons/ios   # デスクトップのみなので不要
 ```
 
@@ -25,4 +25,4 @@ SVG を `tauri icon` に直接渡してもいいが、そちらは resvg で描�
 斑点のコントラストとフチの太さが変わる。上のようにブラウザで PNG にしてから
 渡すこと。
 
-タイル案に差し替えるなら `npm run tauri icon icon/app-icon-tile.png`。
+タイル案に差し替えるなら `pnpm tauri icon icon/app-icon-tile.png`。

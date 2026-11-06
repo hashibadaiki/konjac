@@ -5,9 +5,9 @@
  * through resvg, which renders the filters here differently (weaker specks, a
  * heavier edge).
  *
- *   npm i -D playwright && npx playwright install chromium
+ *   pnpm add -D playwright && pnpm exec playwright install chromium
  *   node icon/build.mjs
- *   npm run tauri icon icon/app-icon.png
+ *   pnpm tauri icon icon/app-icon.png
  *   rm -rf src-tauri/icons/android src-tauri/icons/ios   # desktop only
  *
  * Every dimension comes from the constants below; the specks are placed in

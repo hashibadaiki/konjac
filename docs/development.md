@@ -1,14 +1,14 @@
 # 開発
 
-前提: Node.js 18+ / Rust 1.77+ / [Tauri の OS 別依存](https://tauri.app/start/prerequisites/)。
+前提: Node.js 22.13+ / pnpm 11 / Rust 1.77+ / [Tauri の OS 別依存](https://tauri.app/start/prerequisites/)。
 ビルドする側の OS も [対応 OS](install.md#対応-os) と同じ下限。
 llama.cpp を C++ からビルドするので **CMake と C/C++ コンパイラ**も要る（macOS は Xcode
 Command Line Tools で揃う）。初回の `cargo build` は llama.cpp のぶん数分余計にかかる。
 
 ```bash
-npm install
-npm run tauri dev      # 開発起動
-npm run tauri build    # 配布用ビルド
+pnpm install
+pnpm tauri dev         # 開発起動
+pnpm tauri build       # 配布用ビルド
 ```
 
 依存は薄い。フロントは素の TypeScript + Vite、フレームワークなし。推論は

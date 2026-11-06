@@ -168,7 +168,7 @@ pub fn grant_consent(app: &AppHandle) {
     mark_seen(app, CLIPBOARD_CONSENT);
 }
 
-/// Gives a debug build a directory of its own, so `npm run tauri dev` and an
+/// Gives a debug build a directory of its own, so `pnpm tauri dev` and an
 /// installed release do not write over each other.
 ///
 /// Split out from [`config_dir`] and taking the flag as an argument so the
