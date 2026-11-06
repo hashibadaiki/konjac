@@ -12,7 +12,7 @@ Windows builds are published too, but they are [not expected to work yet](#downl
 Translation runs **on your machine** with Preferred Networks' open-weight
 **[PLaMo 3 Translate](https://www.preferred.jp/ja/news/pr20261105)** through llama.cpp. The model
 is downloaded once from Hugging Face the first time you use it; after that, nothing you
-translate leaves the machine and no network connection is needed.
+translate leaves the machine and no network connection is needed. **Built with PLaMo.**
 
 Alternatively, pick **Claude Haiku** in the model menu to translate through the local
 `claude` CLI (Claude Code, `claude -p`) on your Claude subscription. That engine **sends
