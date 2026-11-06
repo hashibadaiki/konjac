@@ -56,7 +56,7 @@
 （テキスト欄は入力が止まってから、またはフォーカスが外れたとき）。保存先は OS の設定
 ディレクトリ配下の `settings.json`
 （macOS なら `~/Library/Application Support/dev.hashibadaiki.konjac/`。ソースから
-`npm run tauri dev` で動かしたときだけ `.dev` の付いた別ディレクトリを使う）。
+`pnpm tauri dev` で動かしたときだけ `.dev` の付いた別ディレクトリを使う）。
 
 モデルはアプリのデータディレクトリ配下の `models/` に入る（macOS なら
 `~/Library/Application Support/dev.hashibadaiki.konjac/models/`。正確な場所は設定画面に出る）。
